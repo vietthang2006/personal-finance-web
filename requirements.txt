@@ -1,0 +1,37 @@
+# ============================================================
+# Backend runtime — Personal Finance Web (Python 3.12)
+# Cài:  pip install -r requirements.txt
+# Quy ước: ghim phiên bản chính xác (==) để mọi máy/VM dựng giống nhau.
+# Nâng phiên bản chỉ qua Pull Request riêng, kèm chạy lại toàn bộ test.
+# ============================================================
+
+# --- Web framework ---
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32        # nhận upload tệp (import sao kê, hóa đơn)
+
+# --- Cấu hình & kiểm tra dữ liệu vào ra ---
+pydantic==2.14.0
+pydantic-settings==2.15.0       # đọc biến môi trường / .env
+email-validator==2.3.0          # EmailStr của Pydantic
+
+# --- PostgreSQL ---
+SQLAlchemy==2.1.4               # chỉ dùng Core + text(): SQL viết tay, tham số hóa
+psycopg[binary]==3.3.6          # driver: URL dạng postgresql+psycopg://
+alembic==1.20.0                 # migration có quản lý phiên bản
+
+bcrypt==5.0.0                   # băm mật khẩu (dùng trực tiếp, không qua passlib)
+PyJWT==2.15.1                   # access token 15 phút
+
+# --- Import sao kê, tính toán ngày, tỷ giá ---
+pandas==3.0.6                   # đọc CSV/Excel, chuẩn hóa cột (W8)
+openpyxl==3.1.5                 # engine đọc .xlsx cho pandas
+python-dateutil==2.9.0.post0    # relativedelta cho công thức F4 (ngày chạy định kỳ)
+tzdata==2026.5                  # múi giờ user (BR-T02) trong image slim
+httpx==0.28.1                   # gọi API tỷ giá (W14); cũng là phụ thuộc của TestClient
+
+# --- Job nền ---
+APScheduler==3.11.3             # lịch 00:05, 00:10, ... (W19); KHÔNG nâng lên 4.x (API khác)
+
+# --- Lưu trữ tệp hóa đơn trên VM3 ---
+minio==7.2.20                   # SDK S3-compatible nói chuyện với MinIO ở VM3
