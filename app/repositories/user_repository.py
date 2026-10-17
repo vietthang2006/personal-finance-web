@@ -15,6 +15,10 @@ class UserRepository(BaseRepository[User]):
     def get_by_id(self, user_id: UUID) -> User | None:
         return self.db.get(User, user_id)
 
+    def get_by_id_for_update(self, user_id: UUID) -> User | None:
+        stmt = select(User).where(User.id == user_id).with_for_update()
+        return self.db.scalar(stmt)
+
     def get_by_id_with_roles(self, user_id: UUID) -> User | None:
         stmt = (
             select(User)

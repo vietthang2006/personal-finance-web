@@ -28,6 +28,10 @@ def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def hash_password_reset_token(token: str) -> str:
+    return hash_refresh_token(token)
+
+
 def create_access_token(user_id: UUID, roles: list[str]) -> str:
     now = datetime.now(timezone.utc)
     payload = {

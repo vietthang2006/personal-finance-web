@@ -16,10 +16,10 @@ from app.models.transaction import (
     TransactionTag,
     Transfer,
 )
-from app.models.user import Role, User, UserRole, UserSession
+from app.models.user import PasswordResetToken, Role, User, UserRole, UserSession
 
 __all__ = [
-    "Base", "User", "Role", "UserRole", "UserSession", "Currency", "ExchangeRate",
+    "Base", "User", "Role", "UserRole", "UserSession", "PasswordResetToken", "Currency", "ExchangeRate",
     "Account", "AccountBalanceHistory", "TransactionCategory", "TransactionSubcategory",
     "Tag", "Transaction", "TransactionTag", "TransactionAttachment", "Transfer",
     "ImportBatch", "ImportRow", "Budget", "BudgetCategory", "BudgetAlertEvent",

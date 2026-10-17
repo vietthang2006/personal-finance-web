@@ -2,8 +2,16 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AuthServiceDep, DbSession
-from app.schemas.user import LoginRequest, RefreshRequest, TokenPair, UserCreate
-from app.services.auth_service import AuthenticationError, RegistrationError
+from app.schemas.user import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    MessageResponse,
+    RefreshRequest,
+    ResetPasswordRequest,
+    TokenPair,
+    UserCreate,
+)
+from app.services.auth_service import AuthenticationError, PasswordResetError, RegistrationError
 
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -80,4 +88,33 @@ def logout(
     except AuthenticationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(
+    data: ForgotPasswordRequest,
+    request: Request,
+    auth_service: AuthServiceDep,
+) -> MessageResponse:
+    auth_service.request_password_reset(str(data.email), request)
+    return MessageResponse(
+        message="Nếu email hợp lệ, hướng dẫn đặt lại mật khẩu đã được gửi."
+    )
+
+
+@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+def reset_password(
+    data: ResetPasswordRequest,
+    auth_service: AuthServiceDep,
+    db: DbSession,
+) -> Response:
+    try:
+        auth_service.reset_password(data.token, data.new_password)
+    except PasswordResetError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired password reset token",
+        ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
