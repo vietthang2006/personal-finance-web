@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.security import InvalidTokenError, decode_token
 from app.models.user import User
 from app.repositories.currency_repository import CurrencyRepository
+from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.services.auth_service import AuthService
@@ -26,12 +27,19 @@ def get_user_session_repository(db: DbSession) -> UserSessionRepository:
     return UserSessionRepository(db)
 
 
+def get_password_reset_token_repository(db: DbSession) -> PasswordResetTokenRepository:
+    return PasswordResetTokenRepository(db)
+
+
 def get_currency_repository(db: DbSession) -> CurrencyRepository:
     return CurrencyRepository(db)
 
 
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 UserSessionRepositoryDep = Annotated[UserSessionRepository, Depends(get_user_session_repository)]
+PasswordResetTokenRepositoryDep = Annotated[
+    PasswordResetTokenRepository, Depends(get_password_reset_token_repository)
+]
 CurrencyRepositoryDep = Annotated[CurrencyRepository, Depends(get_currency_repository)]
 
 
@@ -40,12 +48,14 @@ def get_auth_service(
     user_repo: UserRepositoryDep,
     session_repo: UserSessionRepositoryDep,
     currency_repo: CurrencyRepositoryDep,
+    reset_token_repo: PasswordResetTokenRepositoryDep,
 ) -> AuthService:
     return AuthService(
         db=db,
         user_repo=user_repo,
         session_repo=session_repo,
         currency_repo=currency_repo,
+        reset_token_repo=reset_token_repo,
     )
 
 

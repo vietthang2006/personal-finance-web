@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = Field(default=15, gt=0)
     refresh_token_expire_days: int = Field(default=30, gt=0)
+    password_reset_token_expire_minutes: int = Field(default=30, gt=0)
     app_name: str = "Personal Finance API"
     debug: bool = False
 

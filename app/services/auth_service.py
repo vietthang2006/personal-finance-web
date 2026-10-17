@@ -1,4 +1,7 @@
 import hmac
+import ipaddress
+import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -12,14 +15,19 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
     hash_password,
+    hash_password_reset_token,
     hash_refresh_token,
     verify_password,
 )
-from app.models.user import User, UserSession
+from app.models.user import PasswordResetToken, User, UserSession
 from app.repositories.currency_repository import CurrencyRepository
+from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.schemas.user import LoginRequest, TokenPair, UserCreate
+
+
+logger = logging.getLogger(__name__)
 
 
 class AuthenticationError(Exception):
@@ -30,6 +38,10 @@ class RegistrationError(Exception):
     pass
 
 
+class PasswordResetError(Exception):
+    pass
+
+
 class AuthService:
     def __init__(
         self,
@@ -37,17 +49,20 @@ class AuthService:
         user_repo: UserRepository | None = None,
         session_repo: UserSessionRepository | None = None,
         currency_repo: CurrencyRepository | None = None,
+        reset_token_repo: PasswordResetTokenRepository | None = None,
     ) -> None:
         if db is not None:
             self.db = db
             self.user_repo = user_repo or UserRepository(db)
             self.session_repo = session_repo or UserSessionRepository(db)
             self.currency_repo = currency_repo or CurrencyRepository(db)
+            self.reset_token_repo = reset_token_repo or PasswordResetTokenRepository(db)
         elif user_repo is not None:
             self.user_repo = user_repo
             self.db = user_repo.db
             self.session_repo = session_repo or UserSessionRepository(self.db)
             self.currency_repo = currency_repo or CurrencyRepository(self.db)
+            self.reset_token_repo = reset_token_repo or PasswordResetTokenRepository(self.db)
         else:
             raise ValueError("Either db or repositories must be provided to AuthService")
 
@@ -130,18 +145,56 @@ class AuthService:
             self.session_repo.revoke(session)
             self.db.commit()
 
+    def request_password_reset(self, email: str, request: Request) -> None:
+        user = self.user_repo.get_by_email(email)
+        if user is None or user.status != "active":
+            return
+
+        now = datetime.now(timezone.utc)
+        raw_token = secrets.token_urlsafe(32)
+        expires_at = now + timedelta(minutes=settings.password_reset_token_expire_minutes)
+        self.reset_token_repo.revoke_active_for_user(user.id, now)
+        self.reset_token_repo.create(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=hash_password_reset_token(raw_token),
+                expires_at=expires_at,
+                ip_address=self._client_ip(request),
+                user_agent=request.headers.get("user-agent", "")[:255] or None,
+            )
+        )
+        self.db.commit()
+        if settings.debug:
+            logger.info("Password reset token for %s: %s", user.email, raw_token)
+
+    def reset_password(self, token: str, new_password: str) -> None:
+        now = datetime.now(timezone.utc)
+        reset_token = self.reset_token_repo.get_by_hash(
+            hash_password_reset_token(token), for_update=True
+        )
+        if (
+            reset_token is None
+            or reset_token.expires_at <= now
+            or reset_token.used_at is not None
+            or reset_token.revoked_at is not None
+        ):
+            raise PasswordResetError("Invalid or expired password reset token")
+
+        user = self.user_repo.get_by_id_for_update(reset_token.user_id)
+        if user is None or user.status != "active":
+            raise PasswordResetError("Invalid or expired password reset token")
+
+        user.password_hash = hash_password(new_password)
+        self.reset_token_repo.mark_used(reset_token, now)
+        self.reset_token_repo.revoke_active_for_user(user.id, now)
+        self.session_repo.revoke_all_by_user_id(user.id, now)
+        self.db.commit()
+
     def _create_session(self, user: User, request: Request) -> TokenPair:
         expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
         session_id = uuid4()
         refresh = create_refresh_token(user.id, session_id, expires_at)
-        client_ip = None
-        if request.client and request.client.host:
-            try:
-                import ipaddress
-                ipaddress.ip_address(request.client.host)
-                client_ip = request.client.host
-            except ValueError:
-                client_ip = None
+        client_ip = self._client_ip(request)
 
         session = UserSession(
             id=session_id,
@@ -158,6 +211,15 @@ class AuthService:
             ),
             refresh_token=refresh,
         )
+
+    @staticmethod
+    def _client_ip(request: Request) -> str | None:
+        if request.client is None or not request.client.host:
+            return None
+        try:
+            return str(ipaddress.ip_address(request.client.host))
+        except ValueError:
+            return None
 
     @staticmethod
     def _decode(token: str) -> dict[str, object]:
