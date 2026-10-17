@@ -1,18 +1,23 @@
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import DbSession
+from app.api.deps import AuthServiceDep, DbSession
 from app.schemas.user import LoginRequest, RefreshRequest, TokenPair, UserCreate
-from app.services.auth_service import AuthService, AuthenticationError, RegistrationError
+from app.services.auth_service import AuthenticationError, RegistrationError
 
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 @router.post("/register", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
-def register(data: UserCreate, request: Request, db: DbSession) -> TokenPair:
+def register(
+    data: UserCreate,
+    request: Request,
+    auth_service: AuthServiceDep,
+    db: DbSession,
+) -> TokenPair:
     try:
-        _, pair = AuthService(db).register(data, request)
+        _, pair = auth_service.register(data, request)
         return pair
     except RegistrationError as exc:
         db.rollback()
@@ -26,9 +31,14 @@ def register(data: UserCreate, request: Request, db: DbSession) -> TokenPair:
 
 
 @router.post("/login", response_model=TokenPair)
-def login(data: LoginRequest, request: Request, db: DbSession) -> TokenPair:
+def login(
+    data: LoginRequest,
+    request: Request,
+    auth_service: AuthServiceDep,
+    db: DbSession,
+) -> TokenPair:
     try:
-        _, pair = AuthService(db).login(data, request)
+        _, pair = auth_service.login(data, request)
         return pair
     except AuthenticationError as exc:
         db.rollback()
@@ -43,9 +53,13 @@ def login(data: LoginRequest, request: Request, db: DbSession) -> TokenPair:
 
 
 @router.post("/refresh", response_model=TokenPair)
-def refresh(data: RefreshRequest, db: DbSession) -> TokenPair:
+def refresh(
+    data: RefreshRequest,
+    auth_service: AuthServiceDep,
+    db: DbSession,
+) -> TokenPair:
     try:
-        return AuthService(db).rotate_refresh_token(data.refresh_token)
+        return auth_service.rotate_refresh_token(data.refresh_token)
     except AuthenticationError as exc:
         db.rollback()
         raise HTTPException(
@@ -56,9 +70,13 @@ def refresh(data: RefreshRequest, db: DbSession) -> TokenPair:
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(data: RefreshRequest, db: DbSession) -> Response:
+def logout(
+    data: RefreshRequest,
+    auth_service: AuthServiceDep,
+    db: DbSession,
+) -> Response:
     try:
-        AuthService(db).revoke_refresh_token(data.refresh_token)
+        auth_service.revoke_refresh_token(data.refresh_token)
     except AuthenticationError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
