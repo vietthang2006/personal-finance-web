@@ -3,8 +3,8 @@ from datetime import datetime
 from uuid import UUID as UUIDType
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, SmallInteger,
-    String, UniqueConstraint, func,
+    CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, SmallInteger,
+    String, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -40,6 +40,9 @@ class User(Base):
     sessions: Mapped[list["UserSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Role(Base):
@@ -70,6 +73,11 @@ class UserRole(Base):
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
+    __table_args__ = (
+        CheckConstraint("expires_at > created_at", name="ck_sessions_expiry"),
+        Index("ix_sessions_user", "user_id", postgresql_where=text("revoked_at IS NULL")),
+    )
+
     id: Mapped[UUIDType] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[UUIDType] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
@@ -82,3 +90,31 @@ class UserSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="sessions")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    __table_args__ = (
+        CheckConstraint("expires_at > created_at", name="ck_pwd_reset_expiry"),
+        CheckConstraint("used_at IS NULL OR used_at >= created_at", name="ck_pwd_reset_used_order"),
+        Index(
+            "ix_pwd_reset_active",
+            "user_id",
+            postgresql_where=text("used_at IS NULL AND revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[UUIDType] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[UUIDType] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ip_address: Mapped[str | None] = mapped_column(INET)
+    user_agent: Mapped[str | None] = mapped_column(String(255))
+
+    user: Mapped[User] = relationship(back_populates="password_reset_tokens")
