@@ -1,8 +1,6 @@
 # Kế hoạch kiểm thử (Test Plan)
 
-Người phụ trách: **Bùi Tiến Thành (M4)** · Người xác nhận: **Thắng (M1)** · Issue: **M4-01** · Pha: P1, cập nhật liên tục đến P6.
-
-Tài liệu này liệt kê các ca kiểm thử của hệ thống Personal Finance Web theo 11 nhóm của `08` §9. Cột **Mong đợi** lấy từ tài liệu thiết kế (`03`, `04`, `07`, `08`), **không** suy ra từ mã đang chạy: nếu mã và tài liệu lệch nhau thì mở Issue (mã sai là `bug`, tài liệu sai là errata trong `00` §3), không sửa kỳ vọng cho khớp mã.
+Người phụ trách: **Bùi Tiến Thành** · Người xác nhận: **Thắng** · Issue: **M4-01** · Pha: P1, cập nhật liên tục đến P6.
 
 ## 1. Cách dùng
 
