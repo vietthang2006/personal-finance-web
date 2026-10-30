@@ -117,3 +117,4 @@ def downgrade() -> None:
     op.drop_column("import_batches", "imported_rows")
     op.drop_column("import_batches", "total_rows")
     op.drop_column("import_batches", "file_name")
+

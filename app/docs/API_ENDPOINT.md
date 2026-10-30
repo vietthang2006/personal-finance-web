@@ -29,6 +29,11 @@ Tài liệu được phân loại theo cấu trúc mô-đun hóa để phục v�
   - [3.2. Danh sách & Chi tiết lô Import](#32-danh-sách--chi-tiết-lô-import)
   - [3.3. Xác nhận ghi sổ giao dịch (Confirm / Finalize)](#33-xác-nhận-ghi-sổ-giao-dịch-confirm--finalize)
   - [3.4. Hủy lô nháp (Cancel Batch)](#34-hủy-lô-nháp-cancel-batch)
+- [4. MODULE F: NGÂN SÁCH & CẢNH BÁO CHI TIÊU (DANH MỤC SỐ 6)](#4-module-f-ngân-sách--cảnh-báo-chi-tiêu-danh-mục-số-6)
+  - [4.1. Quản lý Kỳ ngân sách (Budgets)](#41-quản-lý-kỳ-ngân-sách-budgets)
+  - [4.2. Phân bổ Hạn mức Danh mục (Budget Categories)](#42-phân-bổ-hạn-mức-danh-mục-budget-categories)
+  - [4.3. Tính toán Tiến độ Chi tiêu Thực tế (Budget Progress)](#43-tính-toán-tiến-độ-chi-tiêu-thực-tế-budget-progress)
+  - [4.4. Cảnh báo Ngưỡng & DB Idempotency (Alert Events)](#44-cảnh-báo-ngưỡng--db-idempotency-alert-events)
 
 ---
 
@@ -601,3 +606,81 @@ Module E đảm nhiệm quy trình nạp dữ liệu giao dịch hàng loạt t�
 
 - **API Endpoint**: `DELETE /api/v1/imports/batches/{batch_id}`
 - **Quy tắc**: Chỉ cho phép xóa/hủy các lô nháp chưa confirm (`staged`, `expired`, `failed`). Không được phép hủy lô đã `confirmed` để bảo vệ tính toàn vẹn của sổ giao dịch. Trả về `204 No Content`.
+
+---
+
+## 4. MODULE F: NGÂN SÁCH & CẢNH BÁO CHI TIÊU (DANH MỤC SỐ 6)
+
+Module F chịu trách nhiệm quản lý kế hoạch tài chính, hạn mức chi tiêu định kỳ, tự động tính toán tiến độ thực chi đối soát với các giao dịch, và kích hoạt các mức cảnh báo chi tiêu sớm.
+
+### 4.1. QUẢN LÝ KỲ NGÂN SÁCH (BUDGETS)
+
+- **POST `/api/v1/budgets`**: Tạo kỳ ngân sách mới.
+  - **Request Body**:
+    ```json
+    {
+      "name": "Ngân sách sinh hoạt Tháng 11",
+      "period_type": "monthly",
+      "start_date": "2026-11-01",
+      "end_date": "2026-11-30",
+      "total_limit": 15000000.00,
+      "categories": [
+        {
+          "category_id": 1,
+          "limit_amount": 5000000.00,
+          "warn_percent": 80
+        }
+      ]
+    }
+    ```
+  - **Quy tắc**:
+    - `period_type` hợp lệ: `monthly`, `quarterly`, `yearly`, `custom`.
+    - Ràng buộc ngày: `end_date >= start_date`.
+    - `total_limit > 0`.
+    - Tổng hạn mức các danh mục con trong kỳ không được vượt quá `total_limit`.
+    - Chỉ cho phép gán danh mục có `kind = 'expense'`.
+- **GET `/api/v1/budgets`**: Danh sách ngân sách của người dùng. Query params: `status` (`active`, `archived`), `offset`, `limit`.
+- **GET `/api/v1/budgets/{id}`**: Lấy chi tiết kỳ ngân sách kèm các danh mục đã phân bổ.
+- **PUT `/api/v1/budgets/{id}`**: Cập nhật thông tin ngân sách (tên, chu kỳ, ngày, hạn mức, trạng thái).
+- **DELETE `/api/v1/budgets/{id}`**: Xóa kỳ ngân sách và các hạn mức, cảnh báo phụ thuộc (`CASCADE`).
+
+---
+
+### 4.2. PHÂN BỔ HẠN MỨC DANH MỤC (BUDGET CATEGORIES)
+
+- **POST `/api/v1/budgets/{id}/categories`**: Gán danh mục chi tiêu vào ngân sách.
+  - **Request Body**:
+    ```json
+    {
+      "category_id": 2,
+      "limit_amount": 3000000.00,
+      "warn_percent": 85
+    }
+    ```
+  - **Composite FK**: Cơ sở dữ liệu bảo vệ toàn vẹn qua khóa ngoại kép `(category_id, category_kind) -> transaction_categories(id, kind)` với `category_kind = 'expense'`.
+  - **Unique**: `UNIQUE (budget_id, category_id)` chống gán trùng một danh mục hai lần trong cùng một kỳ ngân sách.
+- **PUT `/api/v1/budgets/{id}/categories/{category_id}`**: Điều chỉnh hạn mức hoặc ngưỡng cảnh báo (%) của danh mục.
+- **DELETE `/api/v1/budgets/{id}/categories/{category_id}`**: Gỡ danh mục khỏi ngân sách.
+
+---
+
+### 4.3. TÍNH TOÁN TIẾN ĐỘ CHI TIÊU THỰC TẾ (BUDGET PROGRESS)
+
+- **API Endpoint**: `GET /api/v1/budgets/{id}/progress`
+- **Business Logic**:
+  1. Truy vấn các giao dịch chi tiêu (`transactions` có `kind = 'expense'`, `user_id = budget.user_id`) phát sinh trong khoảng thời gian `start_date` đến `end_date`.
+  2. Tính tổng số tiền đã chi (`spent_amount`), số tiền còn lại (`remaining_amount`), và tỷ lệ % đã dùng (`percent_used`) cho từng danh mục.
+  3. Tính tổng số tiền thực chi trên toàn bộ ngân sách và tỷ lệ phần trăm chung (`overall_percent_used`).
+  4. Xác định cờ trạng thái: `is_warning` (`percent_used >= warn_percent`), `is_exceeded` (`percent_used >= 100%`).
+  5. Tự động kiểm tra và ghi nhận các sự kiện cảnh báo mới vào `budget_alert_events`.
+
+---
+
+### 4.4. CẢNH BÁO NGƯỠNG & DB IDEMPOTENCY (ALERT EVENTS)
+
+- **API Endpoint**: `GET /api/v1/budgets/{id}/alerts`
+- **Mức cảnh báo**:
+  - `warning`: Kích hoạt khi chi tiêu đạt đến hoặc vượt ngưỡng `warn_percent` (mặc định 80%).
+  - `exceeded`: Kích hoạt khi chi tiêu vượt quá 100% hạn mức danh mục.
+- **DB-Level Idempotency**:
+  - Ràng buộc duy nhất `uq_alert_once UNIQUE (budget_category_id, level)` ngăn chặn tuyệt đối việc phát sinh cảnh báo kép hoặc gửi trùng lặp thông báo nhiều lần trong cùng một kỳ ngân sách.

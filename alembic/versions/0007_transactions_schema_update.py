@@ -87,3 +87,4 @@ def downgrade() -> None:
     op.drop_constraint("uq_tags_user_name", "tags", type_="unique")
 
     op.drop_column("transaction_categories", "icon")
+
