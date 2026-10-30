@@ -7,15 +7,25 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import InvalidTokenError, decode_token
+from app.repositories.category_repository import CategoryRepository
 from app.models.user import User
 from app.repositories.account_balance_history_repository import AccountBalanceHistoryRepository
 from app.repositories.account_repository import AccountRepository
+from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.currency_repository import CurrencyRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
+from app.repositories.tag_repository import TagRepository
+from app.repositories.transaction_repository import TransactionRepository
+from app.repositories.transfer_repository import TransferRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.services.account_service import AccountService
+from app.services.attachment_service import AttachmentService
+from app.services.category_service import CategoryService
 from app.services.auth_service import AuthService
+from app.services.tag_service import TagService
+from app.services.transaction_service import TransactionService
+from app.services.transfer_service import TransferService
 from app.services.user_service import UserService
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -46,6 +56,26 @@ def get_account_balance_history_repository(db: DbSession) -> AccountBalanceHisto
     return AccountBalanceHistoryRepository(db)
 
 
+def get_category_repository(db: DbSession) -> CategoryRepository:
+    return CategoryRepository(db)
+
+
+def get_transaction_repository(db: DbSession) -> TransactionRepository:
+    return TransactionRepository(db)
+
+
+def get_transfer_repository(db: DbSession) -> TransferRepository:
+    return TransferRepository(db)
+
+
+def get_tag_repository(db: DbSession) -> TagRepository:
+    return TagRepository(db)
+
+
+def get_attachment_repository(db: DbSession) -> AttachmentRepository:
+    return AttachmentRepository(db)
+
+
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 UserSessionRepositoryDep = Annotated[UserSessionRepository, Depends(get_user_session_repository)]
 PasswordResetTokenRepositoryDep = Annotated[
@@ -56,6 +86,11 @@ AccountRepositoryDep = Annotated[AccountRepository, Depends(get_account_reposito
 AccountBalanceHistoryRepositoryDep = Annotated[
     AccountBalanceHistoryRepository, Depends(get_account_balance_history_repository)
 ]
+CategoryRepositoryDep = Annotated[CategoryRepository, Depends(get_category_repository)]
+TransactionRepositoryDep = Annotated[TransactionRepository, Depends(get_transaction_repository)]
+TransferRepositoryDep = Annotated[TransferRepository, Depends(get_transfer_repository)]
+TagRepositoryDep = Annotated[TagRepository, Depends(get_tag_repository)]
+AttachmentRepositoryDep = Annotated[AttachmentRepository, Depends(get_attachment_repository)]
 
 
 def get_auth_service(
@@ -100,9 +135,71 @@ def get_account_service(
     )
 
 
+def get_category_service(
+    db: DbSession,
+    category_repo: CategoryRepositoryDep,
+) -> CategoryService:
+    return CategoryService(db=db, category_repo=category_repo)
+
+
+def get_transaction_service(
+    db: DbSession,
+    transaction_repo: TransactionRepositoryDep,
+    account_repo: AccountRepositoryDep,
+    category_repo: CategoryRepositoryDep,
+) -> TransactionService:
+    return TransactionService(
+        db=db,
+        transaction_repo=transaction_repo,
+        account_repo=account_repo,
+        category_repo=category_repo,
+    )
+
+
+def get_transfer_service(
+    db: DbSession,
+    transfer_repo: TransferRepositoryDep,
+    account_repo: AccountRepositoryDep,
+) -> TransferService:
+    return TransferService(
+        db=db,
+        transfer_repo=transfer_repo,
+        account_repo=account_repo,
+    )
+
+
+def get_tag_service(
+    db: DbSession,
+    tag_repo: TagRepositoryDep,
+    transaction_repo: TransactionRepositoryDep,
+) -> TagService:
+    return TagService(
+        db=db,
+        tag_repo=tag_repo,
+        transaction_repo=transaction_repo,
+    )
+
+
+def get_attachment_service(
+    db: DbSession,
+    attachment_repo: AttachmentRepositoryDep,
+    transaction_repo: TransactionRepositoryDep,
+) -> AttachmentService:
+    return AttachmentService(
+        db=db,
+        attachment_repo=attachment_repo,
+        transaction_repo=transaction_repo,
+    )
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
+CategoryServiceDep = Annotated[CategoryService, Depends(get_category_service)]
+TransactionServiceDep = Annotated[TransactionService, Depends(get_transaction_service)]
+TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
+TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
+AttachmentServiceDep = Annotated[AttachmentService, Depends(get_attachment_service)]
 
 
 def get_current_user(

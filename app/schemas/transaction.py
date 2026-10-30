@@ -27,6 +27,32 @@ class TransactionCreate(BaseModel):
         return self
 
 
+class TransactionUpdate(BaseModel):
+    kind: Literal["income", "expense"] | None = None
+    category_id: int | None = Field(default=None, gt=0)
+    subcategory_id: int | None = Field(default=None, gt=0)
+    amount: Money | None = None
+    transaction_date: date | None = None
+    description: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=2000)] = None
+    merchant: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=150)] = None
+
+    @model_validator(mode="after")
+    def validate_patch_fields(self) -> "TransactionUpdate":
+        supplied = self.model_fields_set
+        if not supplied:
+            raise ValueError("At least one field must be provided")
+        for field_name in ("kind", "amount", "transaction_date"):
+            if field_name in supplied and getattr(self, field_name) is None:
+                raise ValueError(f"{field_name} cannot be null")
+        category_supplied = "category_id" in supplied
+        subcategory_supplied = "subcategory_id" in supplied
+        if category_supplied != subcategory_supplied:
+            raise ValueError("category_id and subcategory_id must be updated together")
+        if category_supplied and (self.category_id is None) != (self.subcategory_id is None):
+            raise ValueError("category_id and subcategory_id must both be null or both be provided")
+        return self
+
+
 class TransactionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

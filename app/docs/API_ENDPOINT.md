@@ -18,6 +18,12 @@ Tài liệu được phân loại theo cấu trúc mô-đun hóa để phục v�
   - [1.5. Quên mật khẩu & Đặt lại mật khẩu (Forgot & Reset Password)](#15-quên-mật-khẩu--đặt-lại-mật-khẩu-forgot--reset-password)
   - [1.6. Đổi mật khẩu chủ động (Change Password)](#16-đổi-mật-khẩu-chủ-động-change-password)
   - [1.7. Tổng hợp các tính năng bảo mật (Security Features & Best Practices)](#17-tổng-hợp-các-tính-năng-bảo-mật-security-features--best-practices)
+- [2. MODULE D: GIAO DỊCH, DANH MỤC, CHUYỂN TIỀN & ĐÍNH KÈM (DANH MỤC SỐ 4)](#2-module-d-giao-dịch-danh-mục-chuyển-tiền--đính-kèm-danh-mục-số-4)
+  - [2.1. Quản lý Danh mục & Danh mục con (Categories & Subcategories)](#21-quản-lý-danh-mục--danh-mục-con-categories--subcategories)
+  - [2.2. Quản lý Giao dịch Thu / Chi (Transactions)](#22-quản-lý-giao-dịch-thu--chi-transactions)
+  - [2.3. Chuyển tiền giữa các tài khoản (Transfers)](#23-chuyển-tiền-giữa-các-tài-khoản-transfers)
+  - [2.4. Quản lý Nhãn phân loại (Tags)](#24-quản-lý-nhãn-phân-loại-tags)
+  - [2.5. Tệp đính kèm hóa đơn (Transaction Attachments)](#25-tệp-đính-kèm-hóa-đơn-transaction-attachments)
 
 ---
 
@@ -449,3 +455,74 @@ Cho phép người dùng đã đăng nhập tự đổi mật khẩu tài khoả
 8. **Chống dò quét tài khoản (Anti-User Enumeration)**:
    - Endpoint quên mật khẩu luôn phản hồi thành công một thông điệp thống nhất để ngăn chặn kẻ tấn công lợi dụng phản hồi nhằm lập danh sách email có trong hệ thống.
 
+
+
+---
+
+# 2. MODULE D: GIAO DỊCH, DANH MỤC, CHUYỂN TIỀN & ĐÍNH KÈM (DANH MỤC SỐ 4)
+
+Module D đảm nhiệm việc quản lý thu / chi thực tế, hệ thống danh mục phân cấp, luồng chuyển tiền đa tài khoản và tệp đính kèm hóa đơn.
+
+---
+
+### 2.1. QUẢN LÝ DANH MỤC & DANH MỤC CON (CATEGORIES & SUBCATEGORIES)
+
+- **GET `/api/v1/categories`**: Liệt kê các danh mục khả dụng (danh mục mặc định hệ thống + danh mục người dùng tự định nghĩa). Query params: `kind` (`income` | `expense`), `include_inactive` (`true` | `false`).
+- **POST `/api/v1/categories`**: Tạo danh mục tùy chỉnh người dùng (`code`, `name`, `kind`). Mã `code` là duy nhất trên phạm vi người dùng.
+- **PATCH `/api/v1/categories/{id}`**: Cập nhật tên hoặc trạng thái kích hoạt của danh mục tùy chỉnh. (Danh mục hệ thống là read-only).
+- **GET `/api/v1/categories/{id}/subcategories`**: Liệt kê danh mục con của danh mục chỉ định.
+- **POST `/api/v1/categories/{id}/subcategories`**: Thêm danh mục con mới vào danh mục tùy chỉnh.
+- **PATCH `/api/v1/categories/{id}/subcategories/{sub_id}`**: Cập nhật tên / trạng thái danh mục con tùy chỉnh.
+
+---
+
+### 2.2. QUẢN LÝ GIAO DỊCH THU / CHI (TRANSACTIONS)
+
+- **POST `/api/v1/transactions`**: Tạo giao dịch thu/chi (`201 Created`).
+  - Tự động kiểm tra số dư và cập nhật số dư tài khoản nguyên tử (`atomic balance update`).
+  - Chống thấu chi (`overdraft prevention`) nếu tài khoản không bật `allow_negative`, hoặc giới hạn bởi `credit_limit`.
+  - Hỗ trợ mã băm chống trùng lặp `dedup_hash` (64 ký tự hex SHA-256).
+- **GET `/api/v1/transactions`**: Liệt kê danh sách giao dịch với bộ lọc phân trang:
+  - `account_id`: Lọc theo tài khoản.
+  - `kind`: `income` hoặc `expense`.
+  - `category_id`: Lọc theo danh mục.
+  - `from_date` / `to_date`: Lọc theo khoảng thời gian giao dịch.
+  - `offset` / `limit`: Phân trang dữ liệu.
+- **GET `/api/v1/transactions/{id}`**: Lấy chi tiết một giao dịch theo UUID.
+- **PATCH `/api/v1/transactions/{id}`**: Chỉnh sửa giao dịch (loại, số tiền, ngày, danh mục, mô tả, merchant).
+  - Tự động tính chênh lệch (`net_delta = new_delta - old_delta`) và cập nhật số dư nguyên tử.
+- **DELETE `/api/v1/transactions/{id}`**: Xóa giao dịch (`204 No Content`).
+  - Hoàn tác số dư tài khoản nguyên tử.
+
+---
+
+### 2.3. CHUYỂN TIỀN GIỮA CÁC TÀI KHOẢN (TRANSFERS)
+
+- **POST `/api/v1/transfers`**: Thực hiện chuyển khoản nội bộ giữa hai tài khoản cùng người dùng (`201 Created`).
+  - Ràng buộc: `from_account_id != to_account_id`.
+  - Hỗ trợ chuyển đổi ngoại tệ: tự động áp dụng `to_amount` và tỷ giá `exchange_rate`.
+  - Trừ tiền tài khoản nguồn và cộng tiền tài khoản đích trong cùng một database transaction với cơ chế chống deadlock.
+  - Hỗ trợ `idempotency_key` để chống gọi trùng request.
+- **GET `/api/v1/transfers`**: Liệt kê lịch sử chuyển tiền, hỗ trợ lọc theo tài khoản gửi, tài khoản nhận, ngày tháng.
+- **GET `/api/v1/transfers/{id}`**: Xem chi tiết lệnh chuyển khoản.
+
+---
+
+### 2.4. QUẢN LÝ NHÃN PHÂN LOẠI (TAGS)
+
+- **GET `/api/v1/tags`**: Liệt kê nhãn người dùng.
+- **POST `/api/v1/tags`**: Tạo nhãn mới (`name`, `color` dạng HEX `#RRGGBB`).
+- **PATCH `/api/v1/tags/{id}`**: Cập nhật nhãn.
+- **DELETE `/api/v1/tags/{id}`**: Xóa nhãn.
+- **GET `/api/v1/transactions/{id}/tags`**: Lấy danh sách nhãn gắn trên giao dịch.
+- **POST `/api/v1/transactions/{id}/tags`**: Gắn danh sách nhãn vào giao dịch (`tag_ids`).
+- **DELETE `/api/v1/transactions/{id}/tags/{tag_id}`**: Gỡ nhãn khỏi giao dịch.
+
+---
+
+### 2.5. TỆP ĐÍNH KÈM HÓA ĐƠN (TRANSACTION ATTACHMENTS)
+
+- **POST `/api/v1/transactions/{id}/attachments`**: Tải tệp hóa đơn đính kèm (`multipart/form-data`). Giới hạn dung lượng tối đa **10MB** theo ràng buộc database `ck_attachments_max_size`.
+- **GET `/api/v1/transactions/{id}/attachments`**: Liệt kê các tệp đính kèm của giao dịch.
+- **GET `/api/v1/transactions/{id}/attachments/{attachment_id}/download`**: Tải về tệp đính kèm.
+- **DELETE `/api/v1/transactions/{id}/attachments/{attachment_id}`**: Xóa tệp đính kèm và giải phóng bộ nhớ đĩa.
