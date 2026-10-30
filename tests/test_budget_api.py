@@ -206,3 +206,4 @@ class BudgetApiTests(unittest.TestCase):
         data = response.json()
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["level"], "warning")
+

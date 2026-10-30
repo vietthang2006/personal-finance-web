@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import InvalidTokenError, decode_token
-from app.repositories.category_repository import CategoryRepository
 from app.models.user import User
 from app.repositories.account_balance_history_repository import AccountBalanceHistoryRepository
 from app.repositories.account_repository import AccountRepository
 from app.repositories.attachment_repository import AttachmentRepository
+from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.budget_repository import BudgetRepository
+from app.repositories.category_repository import CategoryRepository
 from app.repositories.currency_repository import CurrencyRepository
 from app.repositories.import_repository import ImportRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
@@ -23,9 +24,9 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
 from app.services.account_service import AccountService
 from app.services.attachment_service import AttachmentService
+from app.services.auth_service import AuthService
 from app.services.budget_service import BudgetService
 from app.services.category_service import CategoryService
-from app.services.auth_service import AuthService
 from app.services.import_service import ImportService
 from app.services.tag_service import TagService
 from app.services.transaction_service import TransactionService
@@ -88,6 +89,10 @@ def get_budget_repository(db: DbSession) -> BudgetRepository:
     return BudgetRepository(db)
 
 
+def get_audit_log_repository(db: DbSession) -> AuditLogRepository:
+    return AuditLogRepository(db)
+
+
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 UserSessionRepositoryDep = Annotated[UserSessionRepository, Depends(get_user_session_repository)]
 PasswordResetTokenRepositoryDep = Annotated[
@@ -105,6 +110,7 @@ TagRepositoryDep = Annotated[TagRepository, Depends(get_tag_repository)]
 AttachmentRepositoryDep = Annotated[AttachmentRepository, Depends(get_attachment_repository)]
 ImportRepositoryDep = Annotated[ImportRepository, Depends(get_import_repository)]
 BudgetRepositoryDep = Annotated[BudgetRepository, Depends(get_budget_repository)]
+AuditLogRepositoryDep = Annotated[AuditLogRepository, Depends(get_audit_log_repository)]
 
 
 def get_auth_service(
@@ -140,12 +146,14 @@ def get_account_service(
     account_repo: AccountRepositoryDep,
     history_repo: AccountBalanceHistoryRepositoryDep,
     currency_repo: CurrencyRepositoryDep,
+    audit_repo: AuditLogRepositoryDep,
 ) -> AccountService:
     return AccountService(
         db=db,
         account_repo=account_repo,
         history_repo=history_repo,
         currency_repo=currency_repo,
+        audit_repo=audit_repo,
     )
 
 
@@ -161,12 +169,20 @@ def get_transaction_service(
     transaction_repo: TransactionRepositoryDep,
     account_repo: AccountRepositoryDep,
     category_repo: CategoryRepositoryDep,
+    tag_repo: TagRepositoryDep,
+    history_repo: AccountBalanceHistoryRepositoryDep,
+    audit_repo: AuditLogRepositoryDep,
+    attachment_repo: AttachmentRepositoryDep,
 ) -> TransactionService:
     return TransactionService(
         db=db,
         transaction_repo=transaction_repo,
         account_repo=account_repo,
         category_repo=category_repo,
+        tag_repo=tag_repo,
+        history_repo=history_repo,
+        audit_repo=audit_repo,
+        attachment_repo=attachment_repo,
     )
 
 
@@ -174,11 +190,17 @@ def get_transfer_service(
     db: DbSession,
     transfer_repo: TransferRepositoryDep,
     account_repo: AccountRepositoryDep,
+    history_repo: AccountBalanceHistoryRepositoryDep,
+    audit_repo: AuditLogRepositoryDep,
+    currency_repo: CurrencyRepositoryDep,
 ) -> TransferService:
     return TransferService(
         db=db,
         transfer_repo=transfer_repo,
         account_repo=account_repo,
+        history_repo=history_repo,
+        audit_repo=audit_repo,
+        currency_repo=currency_repo,
     )
 
 

@@ -146,3 +146,4 @@ def downgrade() -> None:
         "budgets",
         "period_type IN ('monthly', 'weekly', 'custom')",
     )
+

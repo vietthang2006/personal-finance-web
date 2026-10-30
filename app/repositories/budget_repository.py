@@ -130,3 +130,4 @@ class BudgetRepository(BaseRepository[Budget]):
             .order_by(BudgetAlertEvent.triggered_at.desc())
         )
         return list(self.db.scalars(stmt).all())
+

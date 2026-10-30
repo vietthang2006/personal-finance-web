@@ -11,6 +11,8 @@ from app.repositories.transaction_repository import TransactionRepository
 
 
 MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg", "application/pdf"}
 
 
 class AttachmentServiceError(Exception):
@@ -51,7 +53,6 @@ class AttachmentService:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _sanitize_filename(self, filename: str) -> str:
-        # Strip paths and keep only base safe filename
         name = os.path.basename(filename)
         cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
         return cleaned[:200] or "attachment.bin"
@@ -68,13 +69,24 @@ class AttachmentService:
         if tx is None:
             raise AttachmentNotFoundError("Transaction not found")
 
+        # Validate max 5 attachments per transaction
+        existing_attachments = self.attachment_repo.list_by_transaction(transaction_id)
+        if isinstance(existing_attachments, list) and len(existing_attachments) >= 5:
+            raise AttachmentValidationError("Cannot upload more than 5 attachments per transaction")
+
+        # Validate file size
         size_bytes = len(content)
         if size_bytes > MAX_ATTACHMENT_SIZE_BYTES:
             raise AttachmentPayloadTooLargeError("Attachment size exceeds maximum limit of 10MB")
         if size_bytes == 0:
             raise AttachmentValidationError("Cannot upload an empty file")
 
+        # Validate format
         safe_name = self._sanitize_filename(file_name)
+        ext = os.path.splitext(safe_name)[1].lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise AttachmentValidationError("Only jpg, jpeg, png, and pdf files are allowed")
+
         storage_key = f"{uuid4().hex}_{safe_name}"
         file_path = self.storage_dir / storage_key
 
@@ -147,4 +159,3 @@ class AttachmentService:
                 file_path.unlink()
             except OSError:
                 pass
-
