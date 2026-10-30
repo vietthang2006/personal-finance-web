@@ -1,7 +1,7 @@
-"""Sync Module E import schema to v1.1.
+"""Update imports schema.
 
-Revision ID: 0008_import_schema_v1_1
-Revises: 0007_sync_module_d_v1_1
+Revision ID: 0008_imports_schema_update
+Revises: 0007_transactions_schema_update
 Create Date: 2026-10-31
 """
 
@@ -10,8 +10,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0008_import_schema_v1_1"
-down_revision = "0007_sync_module_d_v1_1"
+revision = "0008_imports_schema_update"
+down_revision = "0007_transactions_schema_update"
 branch_labels = None
 depends_on = None
 

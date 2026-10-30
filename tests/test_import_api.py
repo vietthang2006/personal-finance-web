@@ -96,3 +96,4 @@ class ImportApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 204)
         self.import_service.cancel_batch.assert_called_once_with(self.user_id, batch_id)
+
