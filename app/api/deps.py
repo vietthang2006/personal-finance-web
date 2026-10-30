@@ -13,6 +13,7 @@ from app.repositories.account_balance_history_repository import AccountBalanceHi
 from app.repositories.account_repository import AccountRepository
 from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.currency_repository import CurrencyRepository
+from app.repositories.import_repository import ImportRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from app.repositories.tag_repository import TagRepository
 from app.repositories.transaction_repository import TransactionRepository
@@ -23,6 +24,7 @@ from app.services.account_service import AccountService
 from app.services.attachment_service import AttachmentService
 from app.services.category_service import CategoryService
 from app.services.auth_service import AuthService
+from app.services.import_service import ImportService
 from app.services.tag_service import TagService
 from app.services.transaction_service import TransactionService
 from app.services.transfer_service import TransferService
@@ -76,6 +78,10 @@ def get_attachment_repository(db: DbSession) -> AttachmentRepository:
     return AttachmentRepository(db)
 
 
+def get_import_repository(db: DbSession) -> ImportRepository:
+    return ImportRepository(db)
+
+
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 UserSessionRepositoryDep = Annotated[UserSessionRepository, Depends(get_user_session_repository)]
 PasswordResetTokenRepositoryDep = Annotated[
@@ -91,6 +97,7 @@ TransactionRepositoryDep = Annotated[TransactionRepository, Depends(get_transact
 TransferRepositoryDep = Annotated[TransferRepository, Depends(get_transfer_repository)]
 TagRepositoryDep = Annotated[TagRepository, Depends(get_tag_repository)]
 AttachmentRepositoryDep = Annotated[AttachmentRepository, Depends(get_attachment_repository)]
+ImportRepositoryDep = Annotated[ImportRepository, Depends(get_import_repository)]
 
 
 def get_auth_service(
@@ -192,6 +199,22 @@ def get_attachment_service(
     )
 
 
+def get_import_service(
+    db: DbSession,
+    import_repo: ImportRepositoryDep,
+    account_repo: AccountRepositoryDep,
+    transaction_repo: TransactionRepositoryDep,
+    category_repo: CategoryRepositoryDep,
+) -> ImportService:
+    return ImportService(
+        db=db,
+        import_repo=import_repo,
+        account_repo=account_repo,
+        transaction_repo=transaction_repo,
+        category_repo=category_repo,
+    )
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
@@ -200,6 +223,7 @@ TransactionServiceDep = Annotated[TransactionService, Depends(get_transaction_se
 TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 AttachmentServiceDep = Annotated[AttachmentService, Depends(get_attachment_service)]
+ImportServiceDep = Annotated[ImportService, Depends(get_import_service)]
 
 
 def get_current_user(

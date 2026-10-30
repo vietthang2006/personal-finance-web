@@ -25,6 +25,14 @@ from app.services.category_service import (
     CategoryServiceError,
     CategoryValidationError,
 )
+from app.services.import_service import (
+    ImportConflictError,
+    ImportNotFoundError,
+    ImportPayloadTooLargeError,
+    ImportService,
+    ImportServiceError,
+    ImportValidationError,
+)
 from app.services.tag_service import (
     TagConflictError,
     TagNotFoundError,
@@ -74,6 +82,12 @@ __all__ = [
     "CategoryService",
     "CategoryServiceError",
     "CategoryValidationError",
+    "ImportConflictError",
+    "ImportNotFoundError",
+    "ImportPayloadTooLargeError",
+    "ImportService",
+    "ImportServiceError",
+    "ImportValidationError",
     "InvalidPasswordError",
     "PasswordResetError",
     "RegistrationError",
