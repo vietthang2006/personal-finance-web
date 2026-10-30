@@ -8,10 +8,13 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import InvalidTokenError, decode_token
 from app.models.user import User
+from app.repositories.account_balance_history_repository import AccountBalanceHistoryRepository
+from app.repositories.account_repository import AccountRepository
 from app.repositories.currency_repository import CurrencyRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import UserSessionRepository
+from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.user_service import UserService
 
@@ -35,12 +38,24 @@ def get_currency_repository(db: DbSession) -> CurrencyRepository:
     return CurrencyRepository(db)
 
 
+def get_account_repository(db: DbSession) -> AccountRepository:
+    return AccountRepository(db)
+
+
+def get_account_balance_history_repository(db: DbSession) -> AccountBalanceHistoryRepository:
+    return AccountBalanceHistoryRepository(db)
+
+
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
 UserSessionRepositoryDep = Annotated[UserSessionRepository, Depends(get_user_session_repository)]
 PasswordResetTokenRepositoryDep = Annotated[
     PasswordResetTokenRepository, Depends(get_password_reset_token_repository)
 ]
 CurrencyRepositoryDep = Annotated[CurrencyRepository, Depends(get_currency_repository)]
+AccountRepositoryDep = Annotated[AccountRepository, Depends(get_account_repository)]
+AccountBalanceHistoryRepositoryDep = Annotated[
+    AccountBalanceHistoryRepository, Depends(get_account_balance_history_repository)
+]
 
 
 def get_auth_service(
@@ -71,8 +86,23 @@ def get_user_service(
     )
 
 
+def get_account_service(
+    db: DbSession,
+    account_repo: AccountRepositoryDep,
+    history_repo: AccountBalanceHistoryRepositoryDep,
+    currency_repo: CurrencyRepositoryDep,
+) -> AccountService:
+    return AccountService(
+        db=db,
+        account_repo=account_repo,
+        history_repo=history_repo,
+        currency_repo=currency_repo,
+    )
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
 
 
 def get_current_user(

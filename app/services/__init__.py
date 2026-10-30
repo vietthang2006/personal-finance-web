@@ -1,3 +1,10 @@
+from app.services.account_service import (
+    AccountConflictError,
+    AccountNotFoundError,
+    AccountService,
+    AccountServiceError,
+    AccountValidationError,
+)
 from app.services.auth_service import (
     AuthService,
     AuthenticationError,
@@ -13,6 +20,11 @@ from app.services.user_service import (
 )
 
 __all__ = [
+    "AccountService",
+    "AccountServiceError",
+    "AccountNotFoundError",
+    "AccountValidationError",
+    "AccountConflictError",
     "AuthService",
     "AuthenticationError",
     "PasswordResetError",
@@ -23,4 +35,3 @@ __all__ = [
     "UserValidationError",
     "InvalidPasswordError",
 ]
-
