@@ -34,6 +34,15 @@ Tài liệu được phân loại theo cấu trúc mô-đun hóa để phục v�
   - [4.2. Phân bổ Hạn mức Danh mục (Budget Categories)](#42-phân-bổ-hạn-mức-danh-mục-budget-categories)
   - [4.3. Tính toán Tiến độ Chi tiêu Thực tế (Budget Progress)](#43-tính-toán-tiến-độ-chi-tiêu-thực-tế-budget-progress)
   - [4.4. Cảnh báo Ngưỡng & DB Idempotency (Alert Events)](#44-cảnh-báo-ngưỡng--db-idempotency-alert-events)
+- [5. MODULE H: MỤC TIÊU TIẾT KIỆM (SAVINGS GOALS & CONTRIBUTIONS)](#5-module-h-mục-tiêu-tiết-kiệm-savings-goals--contributions)
+  - [5.1. Tạo mục tiêu tiết kiệm mới (Create Goal)](#51-tạo-mục-tiêu-tiết-kiệm-mới-create-goal)
+  - [5.2. Danh sách mục tiêu tiết kiệm (List Goals)](#52-danh-sách-mục-tiêu-tiết-kiệm-list-goals)
+  - [5.3. Chi tiết mục tiêu & Lịch sử đóng góp (Get Goal Detail)](#53-chi-tiết-mục-tiêu--lịch-sử-đóng-góp-get-goal-detail)
+  - [5.4. Cập nhật mục tiêu tiết kiệm (Update Goal)](#54-cập-nhật-mục-tiêu-tiết-kiệm-update-goal)
+  - [5.5. Hủy mục tiêu tiết kiệm (Cancel Goal)](#55-hủy-mục-tiêu-tiết-kiệm-cancel-goal)
+  - [5.6. Góp tiền vào mục tiêu tiết kiệm (Contribute — Core Workflow W11)](#56-góp-tiền-vào-mục-tiêu-tiết-kiệm-contribute--core-workflow-w11)
+  - [5.7. Quy tắc Khóa giao dịch nguồn trích quỹ (Source Locking Rules)](#57-quy-tắc-khóa-giao-dịch-nguồn-trích-quỹ-source-locking-rules)
+  - [5.8. Xử lý tranh chấp đa luồng & Tính Idempotent (Concurrency & Idempotency)](#58-xử-lý-tranh-chấp-đa-luồng--tính-idempotent-concurrency--idempotency)
 
 ---
 
@@ -65,6 +74,10 @@ Hệ thống được phát triển trên nền tảng **FastAPI**, tự động
 
 Hệ thống được tổ chức thành các mô-đun độc lập, định hướng tích hợp dài hạn:
 - **1. Module Authentication & User Identity**: Xác thực, phân quyền, cấp phát và thu hồi phiên JWT.
+- **2. Module D: Giao dịch, Danh mục, Chuyển tiền & Đính kèm**: Quản lý thu/chi thực tế, cây danh mục, chuyển tiền đa tài khoản và hóa đơn.
+- **3. Module E: Import sao kê 2 pha**: Tải file sao kê tạm (Staging), đối soát số dư và ghi sổ chính thức.
+- **4. Module F: Ngân sách & Cảnh báo chi tiêu**: Quản lý hạn mức chi tiêu định kỳ, cảnh báo đa ngưỡng và bảo vệ chống trùng lặp.
+- **5. Module H: Mục tiêu tiết kiệm (Savings Goals & Contributions)**: Quản lý kế hoạch tích lũy tài chính, theo dõi tiến độ F7, và thực hiện luồng cốt lõi W11 trích quỹ nguyên tử đa bảng.
 ---
 
 # 1. MODULE AUTHENTICATION & USER IDENTITY (DANH MỤC SỐ 1)
@@ -684,3 +697,419 @@ Module F chịu trách nhiệm quản lý kế hoạch tài chính, hạn mức 
   - `exceeded`: Kích hoạt khi chi tiêu vượt quá 100% hạn mức danh mục.
 - **DB-Level Idempotency**:
   - Ràng buộc duy nhất `uq_alert_once UNIQUE (budget_category_id, level)` ngăn chặn tuyệt đối việc phát sinh cảnh báo kép hoặc gửi trùng lặp thông báo nhiều lần trong cùng một kỳ ngân sách.
+
+
+---
+
+# 5. MODULE H: MỤC TIÊU TIẾT KIỆM (SAVINGS GOALS & CONTRIBUTIONS)
+
+Module H đảm nhiệm việc quản lý các kế hoạch tích lũy tài chính dài hạn và ngắn hạn của người dùng, theo dõi tiến độ hoàn thành theo thời gian thực (Công thức F7), và thực hiện luồng nghiệp vụ cốt lõi **W11 — Góp tiền vào mục tiêu tiết kiệm** bảo đảm tính nguyên tử đa bảng, khóa tài nguyên theo thứ tự chống deadlock và xử lý tranh chấp đa luồng tuần tự hóa (Serialized Critical Section).
+
+---
+
+### SƠ ĐỒ LIÊN KẾT BẢNG DỮ LIỆU (ERD)
+
+```mermaid
+erDiagram
+    users ||--o{ savings_goals : "sở hữu (user_id)"
+    savings_goals ||--o{ goal_contributions : "nhận đóng góp (goal_id)"
+    transactions ||--o| goal_contributions : "giao dịch trích tiền 1-1 (transaction_id)"
+    accounts ||--o{ transactions : "trừ số dư ví nguồn"
+    transaction_categories ||--o{ transactions : "danh mục hệ thống code=SAVING"
+    users ||--o{ notifications : "nhận thông báo goal_achieved"
+    users ||--o{ audit_logs : "ghi vết CREATE/CONTRIBUTE/CANCEL"
+```
+
+---
+
+### VÒNG ĐỜI TRẠNG THÁI CỦA MỤC TIÊU (`savings_goals.status`)
+
+```mermaid
+stateDiagram-v2
+    [*] --> active : "POST /goals (current_amount = 0)"
+    active --> active : "POST /contributions (current_amount < target_amount)"
+    active --> achieved : "POST /contributions (current_amount >= target_amount, gán achieved_at)"
+    active --> cancelled : "POST /cancel (giữ nguyên lịch sử đóng góp, không hoàn tiền)"
+    achieved --> [*]
+    cancelled --> [*]
+```
+
+---
+
+### CÔNG THỨC TÍNH TOÁN TIẾN ĐỘ TÀI CHÍNH (CÔNG THỨC F7)
+
+Mọi phản hồi thông tin mục tiêu tiết kiệm đều được hệ thống tự động tính toán thời gian thực theo múi giờ cá nhân của người dùng (`user.timezone`):
+
+1. **Số tiền còn thiếu (`remaining`)**:
+   $$\text{remaining} = \max(0, \text{target\_amount} - \text{current\_amount})$$
+2. **Tiến độ tích lũy (`progress_percent`)**:
+   $$\text{progress\_percent} = \min\left(100.0, \operatorname{round}\left(\frac{\text{current\_amount}}{\text{target\_amount}} \times 100, 1\right)\right)$$
+3. **Số ngày còn lại đến hạn chót (`days_remaining`)**:
+   - Nếu `deadline` có giá trị: $\text{days\_remaining} = \max(0, (\text{deadline} - \text{today}).\text{days})$.
+   - Nếu không thiết lập `deadline`: `null`.
+4. **Số tiền cần góp trung bình mỗi tháng (`monthly_needed`)**:
+   - Nếu $\text{remaining} = 0$: $0.00$.
+   - Nếu không có `deadline` hoặc $\text{days\_remaining} = 0$: `null`.
+   - Ngược lại: $\text{monthly\_needed} = \operatorname{round}\left(\frac{\text{remaining}}{\max(1, \lceil \text{days\_remaining} / 30.0 \rceil)}, 2\right)$.
+
+---
+
+### 5.1. TẠO MỤC TIÊU TIẾT KIỆM MỚI (CREATE GOAL)
+
+Khởi tạo một mục tiêu tích lũy mới cho người dùng đã xác thực.
+
+- **API Endpoint**: `POST /api/v1/goals`
+- **Full URL**: `http://localhost:8000/api/v1/goals`
+- **Authentication**: `Bearer Token (JWT Access Token Required)`
+- **HTTP Method**: `POST`
+- **Request Headers**:
+  - `Authorization: Bearer <access_token>`
+  - `Content-Type: application/json`
+
+#### Request Body & Constraints
+| Trường | Kiểu dữ liệu | Bắt buộc | Ràng buộc kỹ thuật | Mô tả chi tiết |
+| :--- | :--- | :---: | :--- | :--- |
+| `name` | `string` | Có | 1 - 100 ký tự, `strip_whitespace`, duy nhất theo từng user (`uq_goals_user_name`) | Tên mục tiêu tiết kiệm (ví dụ: "Quỹ mua xe SH", "Quỹ du lịch Hàn Quốc") |
+| `target_amount` | `decimal` | Có | `target_amount > 0`, làm tròn 2 chữ số thập phân (`ck_goals_target_positive`) | Số tiền mục tiêu cần tích lũy |
+| `deadline` | `date (YYYY-MM-DD)` | Không | Phải lớn hơn ngày hôm nay (`deadline > today`) theo múi giờ người dùng (`BR-G01`) | Hạn chót dự kiến đạt mục tiêu |
+| `description` | `string` | Không | Tối đa 500 ký tự | Ghi chú hoặc mô tả chi tiết kế hoạch |
+
+#### Request Body Example
+```json
+{
+  "name": "Quỹ du lịch Nhật Bản",
+  "target_amount": 50000000.00,
+  "deadline": "2027-04-30",
+  "description": "Ngắm hoa anh đào cùng gia đình"
+}
+```
+
+#### Business Flow (Luồng xử lý nghiệp vụ)
+1. **Trích xuất thông tin người dùng**: Đọc `user` từ dependency `get_current_user`.
+2. **Kiểm tra hạn chót (BR-G01)**: Lấy ngày hôm nay theo múi giờ `user.timezone` (mặc định `Asia/Ho_Chi_Minh`). Nếu `deadline <= today`, ném lỗi `422 INVALID_DEADLINE`.
+3. **Kiểm tra tên duy nhất (BR-G01)**: Gọi `goal_repo.exists_by_name(user.id, payload.name)`. Nếu đã tồn tại, ném lỗi `409 GOAL_NAME_TAKEN`.
+4. **Khởi tạo bản ghi**: Tạo `SavingsGoal` với `status = 'active'`, `current_amount = 0.00`, `achieved_at = null`.
+5. **Ghi vết kiểm toán**: Gọi `audit_repo.log(action='CREATE_GOAL', ...)`.
+6. **Commit & Return**: Lưu vào database, tự động tính toán các trường F7 và phản hồi `201 Created`.
+
+#### Response Specifications
+- **Success Response (`201 Created`)**:
+  ```json
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Quỹ du lịch Nhật Bản",
+    "description": "Ngắm hoa anh đào cùng gia đình",
+    "target_amount": 50000000.00,
+    "current_amount": 0.00,
+    "deadline": "2027-04-30",
+    "status": "active",
+    "achieved_at": null,
+    "remaining": 50000000.00,
+    "progress_percent": 0.0,
+    "days_remaining": 546,
+    "monthly_needed": 2631578.95,
+    "created_at": "2026-10-31T20:00:00Z",
+    "updated_at": "2026-10-31T20:00:00Z"
+  }
+  ```
+- **Error Responses**:
+  - `409 Conflict`: Tên mục tiêu đã tồn tại.
+    ```json
+    { "code": "GOAL_NAME_TAKEN", "message": "A goal with name 'Quỹ du lịch Nhật Bản' already exists" }
+    ```
+  - `422 Unprocessable Content`: Hạn chót trong quá khứ hoặc hôm nay.
+    ```json
+    { "code": "INVALID_DEADLINE", "message": "Deadline must be strictly in the future (after today in user timezone)" }
+    ```
+
+---
+
+### 5.2. DANH SÁCH MỤC TIÊU TIẾT KIỆM (LIST GOALS)
+
+Truy vấn danh sách mục tiêu tiết kiệm của người dùng hiện tại kèm các trường tiến độ F7.
+
+- **API Endpoint**: `GET /api/v1/goals`
+- **Full URL**: `http://localhost:8000/api/v1/goals`
+- **Authentication**: `Bearer Token`
+- **HTTP Method**: `GET`
+- **Query Parameters**:
+  | Tham số | Kiểu | Bắt buộc | Mặc định | Mô tả |
+  | :--- | :--- | :---: | :--- | :--- |
+  | `status` | `string` | Không | `null` | Lọc theo trạng thái: `active`, `achieved`, `cancelled`. Nếu bỏ trống, trả về tất cả. |
+  | `offset` | `integer` | Không | `0` | Vị trí bắt đầu phân trang ($\ge 0$). |
+  | `limit` | `integer` | Không | `50` | Số lượng bản ghi tối đa trên một trang ($1 \le \text{limit} \le 100$). |
+
+#### Sắp xếp dữ liệu (Query Q10)
+Kết quả được sắp xếp tự động theo nguyên tắc ưu tiên nghiệp vụ:
+1. `status = 'active'` hiển thị lên đầu tiên.
+2. `deadline ASC NULLS LAST`: Mục tiêu có hạn chót gần nhất xếp trước; mục tiêu không có hạn chót xếp sau.
+3. `created_at DESC`: Mục tiêu mới tạo xếp trước.
+
+#### Response Specifications
+- **Success Response (`200 OK`)**:
+  ```json
+  [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Quỹ du lịch Nhật Bản",
+      "description": "Ngắm hoa anh đào cùng gia đình",
+      "target_amount": 50000000.00,
+      "current_amount": 10000000.00,
+      "deadline": "2027-04-30",
+      "status": "active",
+      "achieved_at": null,
+      "remaining": 40000000.00,
+      "progress_percent": 20.0,
+      "days_remaining": 546,
+      "monthly_needed": 2105263.16,
+      "created_at": "2026-10-31T20:00:00Z",
+      "updated_at": "2026-10-31T20:00:00Z"
+    }
+  ]
+  ```
+
+---
+
+### 5.3. CHI TIẾT MỤC TIÊU & LỊCH SỬ ĐÓNG GÓP (GET GOAL DETAIL)
+
+Lấy thông tin chi tiết của một mục tiêu cụ thể kèm toàn bộ lịch sử các lần trích tiền đóng góp.
+
+- **API Endpoint**: `GET /api/v1/goals/{id}`
+- **Full URL**: `http://localhost:8000/api/v1/goals/{id}`
+- **Authentication**: `Bearer Token`
+- **HTTP Method**: `GET`
+- **Path Parameters**:
+  - `id` (`UUID`): Mã định danh duy nhất của mục tiêu tiết kiệm.
+
+#### Response Specifications
+- **Success Response (`200 OK`)**:
+  ```json
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Quỹ du lịch Nhật Bản",
+    "description": "Ngắm hoa anh đào cùng gia đình",
+    "target_amount": 50000000.00,
+    "current_amount": 10000000.00,
+    "deadline": "2027-04-30",
+    "status": "active",
+    "achieved_at": null,
+    "remaining": 40000000.00,
+    "progress_percent": 20.0,
+    "days_remaining": 546,
+    "monthly_needed": 2105263.16,
+    "created_at": "2026-10-31T20:00:00Z",
+    "updated_at": "2026-10-31T20:00:00Z",
+    "contributions": [
+      {
+        "id": "770e8400-e29b-41d4-a716-446655440002",
+        "goal_id": "550e8400-e29b-41d4-a716-446655440000",
+        "transaction_id": "660e8400-e29b-41d4-a716-446655440001",
+        "amount": 10000000.00,
+        "contributed_at": "2026-10-31T20:15:00Z"
+      }
+    ]
+  }
+  ```
+- **Error Responses**:
+  - `404 Not Found`: Không tìm thấy mục tiêu hoặc mục tiêu thuộc người dùng khác.
+    ```json
+    { "code": "GOAL_NOT_FOUND", "message": "Goal not found" }
+    ```
+
+---
+
+### 5.4. CẬP NHẬT MỤC TIÊU TIẾT KIỆM (UPDATE GOAL)
+
+Chỉnh sửa thông tin kế hoạch của mục tiêu đang trong trạng thái kích hoạt.
+
+- **API Endpoint**: `PATCH /api/v1/goals/{id}`
+- **Full URL**: `http://localhost:8000/api/v1/goals/{id}`
+- **Authentication**: `Bearer Token`
+- **HTTP Method**: `PATCH`
+
+#### Request Body (Tất cả các trường đều là tùy chọn)
+| Trường | Kiểu dữ liệu | Ràng buộc kỹ thuật | Mô tả chi tiết |
+| :--- | :--- | :--- | :--- |
+| `name` | `string` | 1 - 100 ký tự | Tên mục tiêu mới (không được trùng lặp với mục tiêu khác của user) |
+| `target_amount` | `decimal` | `target_amount >= current_amount` (`BR-G09`) | Hạn mức mục tiêu mới. Không được nhỏ hơn số tiền đã tích lũy |
+| `deadline` | `date (YYYY-MM-DD)` | Phải lớn hơn ngày hôm nay (`BR-G01`) | Hạn chót mới |
+| `description` | `string` | Tối đa 500 ký tự | Mô tả kế hoạch |
+
+#### Business Rules
+1. **Chỉ sửa khi `active`**: Nếu mục tiêu đã `achieved` hoặc `cancelled`, ném lỗi `409 GOAL_NOT_ACTIVE`.
+2. **Bảo vệ số tiền đã tích lũy (`BR-G09`)**: Nếu người dùng hạ `target_amount < current_amount`, ném lỗi `422 GOAL_OVER_TARGET` để ngăn chặn trạng thái bất toàn vẹn (tích lũy vượt hạn mức).
+
+---
+
+### 5.5. HỦY MỤC TIÊU TIẾT KIỆM (CANCEL GOAL)
+
+Hủy bỏ mục tiêu tiết kiệm khi người dùng không còn nhu cầu tiếp tục kế hoạch.
+
+- **API Endpoint**: `POST /api/v1/goals/{id}/cancel`
+- **Full URL**: `http://localhost:8000/api/v1/goals/{id}/cancel`
+- **Authentication**: `Bearer Token`
+- **HTTP Method**: `POST`
+
+#### Business Flow & Constraints (BR-G08)
+1. **Kiểm tra trạng thái**: Khóa hàng bằng `SELECT ... FOR UPDATE`. Mục tiêu bắt buộc phải đang ở trạng thái `active`. Nếu đã `achieved` hoặc `cancelled`, ném lỗi `409 GOAL_NOT_ACTIVE`.
+2. **Chuyển trạng thái**: Cập nhật `status = 'cancelled'`.
+3. **Bảo toàn số dư và lịch sử**: Hệ thống **không tự động hoàn tiền** ngược lại vào ví nguồn (vì tiền thực tế người dùng đã bỏ riêng ra cho mục tiêu này và các giao dịch chi tiêu `source='goal'` đã ghi vào sổ cái). Lịch sử đóng góp được giữ nguyên để đối soát.
+4. **Ghi vết kiểm toán**: Ghi `audit_logs` với hành động `CANCEL_GOAL`.
+5. **Phản hồi**: `200 OK` trả về thông tin mục tiêu sau khi hủy.
+
+---
+
+### 5.6. GÓP TIỀN VÀO MỤC TIÊU TIẾT KIỆM (CONTRIBUTE — CORE WORKFLOW W11)
+
+> [!IMPORTANT]
+> Đây là **1 trong 3 luồng nghiệp vụ cốt lõi đăng ký bảo vệ của hệ thống**. Luồng này bắt buộc thực hiện theo mô hình Unit of Work trong **1 Transaction cơ sở dữ liệu duy nhất**, áp dụng khóa tài nguyên tuần tự chống deadlock, và xử lý tranh chấp đa luồng tuần tự hóa (Serialized Critical Section).
+
+- **API Endpoint**: `POST /api/v1/goals/{id}/contributions`
+- **Full URL**: `http://localhost:8000/api/v1/goals/{id}/contributions`
+- **Authentication**: `Bearer Token`
+- **HTTP Method**: `POST`
+
+#### Request Body & Constraints
+| Trường | Kiểu dữ liệu | Bắt buộc | Ràng buộc kỹ thuật | Mô tả chi tiết |
+| :--- | :--- | :---: | :--- | :--- |
+| `account_id` | `UUID` | Có | Phải thuộc quyền sở hữu của user, không bị `is_archived` | Mã ví nguồn trích tiền tiết kiệm |
+| `amount` | `decimal` | Có | `amount > 0`, làm tròn 2 chữ số thập phân (`ck_gc_amount_positive`) | Số tiền nạp vào mục tiêu |
+
+#### Request Body Example
+```json
+{
+  "account_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "amount": 2000000.00
+}
+```
+
+#### Quy trình 11 bước thực thi chi tiết (Core Workflow W11)
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Service as GoalService
+    participant DB as PostgreSQL (Single Tx)
+    participant Account as Account & Balance
+    participant TxRepo as Transactions (source='goal')
+    participant GoalRepo as SavingsGoal & Contributions
+    participant Notif as Notifications (Idempotent)
+
+    Client->>Service: POST /goals/{id}/contributions (account_id, amount)
+    Note over Service,DB: Bước 1: Khóa Goal trước (SELECT FOR UPDATE)
+    Service->>DB: goal_repo.get_for_update(goal_id, user_id)
+    DB-->>Service: goal record (LOCKED)
+    
+    Note over Service: Bước 2-4: Kiểm tra trạng thái & hạn mức
+    alt goal.status != 'active'
+        Service-->>Client: 409 GOAL_NOT_ACTIVE
+    else current_amount + amount > target_amount
+        Service-->>Client: 422 GOAL_OVER_TARGET
+    end
+
+    Note over Service,DB: Bước 5: Khóa Account sau (Anti-Deadlock Lock Ordering)
+    Service->>DB: account_repo.get_for_update(account_id, user_id)
+    DB-->>Service: account record (LOCKED)
+    alt account.is_archived
+        Service-->>Client: 422 ACCOUNT_ARCHIVED
+    else account.currency_code != user.default_currency
+        Service-->>Client: 422 CURRENCY_MISMATCH
+    end
+
+    Note over Service,DB: Bước 6-8: Trừ tiền ví & Ghi giao dịch chi tiêu
+    Service->>DB: category_repo.get_system_by_code('SAVING')
+    Service->>TxRepo: create_transaction(kind='expense', source='goal', amount)
+    Service->>Account: update_balance_atomic(account_id, -amount)
+    alt new_balance is None (Số dư ví không đủ)
+        Service->>DB: ROLLBACK Transaction
+        Service-->>Client: 422 INSUFFICIENT_FUNDS
+    end
+
+    Note over Service,DB: Bước 9-10: Ghi nhận đóng góp & Tăng tiến độ Goal
+    Service->>GoalRepo: add_contribution(goal_id, tx_id, amount)
+    Service->>GoalRepo: increment_current_atomic(goal_id, amount)
+    
+    opt Nếu current_amount >= target_amount (Cán đích 100%)
+        Note over Service,Notif: Bước 10b: Chuyển 'achieved' & Sinh Notification Idempotent
+        Service->>GoalRepo: status = 'achieved', achieved_at = now
+        Service->>Notif: create_if_absent(idempotency_key = 'goal_achieved:{goal_id}')
+    end
+
+    Note over Service,DB: Bước 11: Audit log & Commit duy nhất
+    Service->>DB: audit_repo.log('CONTRIBUTE_GOAL')
+    Service->>DB: COMMIT Transaction (Giải phóng Row Locks)
+    Service-->>Client: 201 Created (GoalContributeResponse)
+```
+
+#### Response Specifications
+- **Success Response (`201 Created`)**:
+  ```json
+  {
+    "contribution": {
+      "id": "770e8400-e29b-41d4-a716-446655440002",
+      "goal_id": "550e8400-e29b-41d4-a716-446655440000",
+      "transaction_id": "660e8400-e29b-41d4-a716-446655440001",
+      "amount": 2000000.00,
+      "contributed_at": "2026-10-31T20:30:00Z"
+    },
+    "goal": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Quỹ du lịch Nhật Bản",
+      "target_amount": 50000000.00,
+      "current_amount": 12000000.00,
+      "deadline": "2027-04-30",
+      "status": "active",
+      "achieved_at": null,
+      "remaining": 38000000.00,
+      "progress_percent": 24.0,
+      "days_remaining": 546,
+      "monthly_needed": 2000000.00
+    },
+    "account": {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "new_balance": 23000000.00
+    }
+  }
+  ```
+- **Error Responses**:
+  - `404 Not Found`: Mục tiêu hoặc ví không tồn tại (`GOAL_NOT_FOUND`, `ACCOUNT_NOT_FOUND`).
+  - `409 Conflict`: Mục tiêu không còn ở trạng thái `active` (`GOAL_NOT_ACTIVE`).
+  - `422 Unprocessable Content`:
+    - `GOAL_OVER_TARGET`: Số tiền góp vượt quá số tiền còn thiếu của mục tiêu (`BR-G04`).
+    - `INSUFFICIENT_FUNDS`: Số dư ví không đủ để trích tiền (`BR-G05`, `BR-A02`).
+    - `CURRENCY_MISMATCH`: Tiền tệ của ví không khớp với tiền tệ mặc định của người dùng (`BR-G03`).
+    - `ACCOUNT_ARCHIVED`: Ví nguồn đã bị lưu trữ/khóa.
+
+---
+
+### 5.7. QUY TẮC KHÓA GIAO DỊCH NGUỒN TRÍCH QUỸ (SOURCE LOCKING RULES)
+
+Theo đặc tả nghiệp vụ **BR-G07** và **BR-T10**:
+Mọi giao dịch chi tiêu được hệ thống tự động sinh ra phục vụ việc góp tiền tiết kiệm đều mang thuộc tính `source = 'goal'`.
+
+* **Chặn sửa giao dịch (`PUT/PATCH /api/v1/transactions/{id}`)**: Bị từ chối ngay lập tức với mã lỗi `409 TX_LOCKED_BY_SOURCE`.
+* **Chặn xóa giao dịch (`DELETE /api/v1/transactions/{id}`)**: Bị từ chối ngay lập tức với mã lỗi `409 TX_LOCKED_BY_SOURCE`.
+* **Cơ chế bảo vệ 2 lớp (Defense in Depth)**:
+  1. *Tầng Service (`TransactionService`)*: Kiểm tra trường `transaction.source in ('goal', 'loan')` trước khi thực hiện logic sửa/xóa.
+  2. *Tầng Database (`PostgreSQL Trigger trg_tx_lock_linked`)*: Kích hoạt `BEFORE UPDATE OR DELETE ON transactions`. Nếu `OLD.source IN ('goal', 'loan')`, trigger phát tín hiệu `RAISE EXCEPTION 'TX_LOCKED_BY_SOURCE'` ngăn chặn trực tiếp từ tầng DB kể cả khi thao tác qua SQL raw.
+
+---
+
+### 5.8. XỬ LÝ TRANH CHẤP ĐA LUỒNG & TÍNH IDEMPOTENT (CONCURRENCY & IDEMPOTENCY)
+
+Module H đã được kiểm chứng và vượt qua bài kiểm thử tranh chấp đồng thời **Kịch bản C5** bằng `threading.Barrier(N)`:
+
+1. **Tuần tự hóa Critical Section (Serialized Execution)**:
+   - Khi có $N$ luồng đồng thời gửi yêu cầu góp tiền vào cùng một mục tiêu, thao tác `SELECT ... FOR UPDATE` trên bảng `savings_goals` sẽ thiết lập khóa hàng (row-level exclusive lock) tại PostgreSQL.
+   - Các luồng sau bắt buộc phải xếp hàng chờ cho đến khi luồng hiện tại commit/rollback xong.
+   - Khi tới lượt, luồng tiếp theo sẽ đọc được giá trị `current_amount` và `status` mới nhất đã commit của luồng trước.
+   - Nhờ đó, loại bỏ hoàn toàn hiện tượng **Lost Update** (mất mát tiền nạp) và chặn chính xác các luồng vượt quá hạn mức với lỗi `422 GOAL_OVER_TARGET`.
+
+2. **Chống Deadlock (Lock Ordering)**:
+   - Trật tự khóa tài nguyên trong toàn bộ hệ thống luôn tuân thủ nguyên tắc: **Khóa `SavingsGoal` trước $\rightarrow$ Khóa `Account` sau**.
+   - Không bao giờ xảy ra tình trạng luồng 1 giữ Goal đòi Account trong khi luồng 2 giữ Account đòi Goal $\rightarrow$ Ngăn ngừa triệt để lỗi Deadlock `40P01`.
+
+3. **Tính Idempotent của Thông báo đạt mục tiêu (`BR-G06`)**:
+   - Khi nhiều luồng cùng nạp và luồng đạt đích kích hoạt thông báo chúc mừng, thông báo được gắn khóa định danh bất biến:
+     $$\text{idempotency\_key} = \text{"goal\_achieved:\{goal\_id\}"}$$
+   - Trước khi chèn thông báo, hệ thống kiểm tra khóa này trong bảng `notifications`. Nếu đã tồn tại, bỏ qua thao tác chèn $\rightarrow$ Bảo đảm chỉ có **duy nhất 1 thông báo** được phát đi, không làm phiền người dùng.
