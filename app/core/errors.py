@@ -61,3 +61,4 @@ async def dbapi_error_handler(request: Request, exc: DBAPIError) -> JSONResponse
             "details": {"original_error": orig_msg},
         },
     )
+

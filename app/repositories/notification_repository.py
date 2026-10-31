@@ -52,3 +52,4 @@ class NotificationRepository(BaseRepository[Notification]):
             notification.read_at = datetime.now(timezone.utc)
             self.db.flush()
         return notification
+

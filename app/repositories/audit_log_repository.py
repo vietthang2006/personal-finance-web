@@ -31,3 +31,4 @@ class AuditLogRepository(BaseRepository[AuditLog]):
         self.db.add(audit)
         self.db.flush()
         return audit
+
