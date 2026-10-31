@@ -34,6 +34,18 @@ class CategoryRepository(BaseRepository[TransactionCategory]):
         )
         return self.db.scalar(stmt)
 
+    def get_system_by_code(
+        self, code: str, kind: str = "expense", include_inactive: bool = False
+    ) -> TransactionCategory | None:
+        stmt = select(TransactionCategory).where(
+            TransactionCategory.user_id.is_(None),
+            func.upper(TransactionCategory.code) == code.strip().upper(),
+            TransactionCategory.kind == kind,
+        )
+        if not include_inactive:
+            stmt = stmt.where(TransactionCategory.is_active.is_(True))
+        return self.db.scalar(stmt)
+
     def code_exists(self, code: str, kind: str, user_id: UUID) -> bool:
         stmt = select(
             select(TransactionCategory.id)
