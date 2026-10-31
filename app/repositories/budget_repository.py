@@ -117,10 +117,20 @@ class BudgetRepository(BaseRepository[Budget]):
         )
         return self.db.scalar(stmt)
 
+    def get_alerts_for_category(self, budget_category_id: UUID) -> list[BudgetAlertEvent]:
+        stmt = select(BudgetAlertEvent).where(
+            BudgetAlertEvent.budget_category_id == budget_category_id,
+        )
+        return list(self.db.scalars(stmt).all())
+
     def create_alert_event(self, alert: BudgetAlertEvent) -> BudgetAlertEvent:
         self.db.add(alert)
         self.db.flush()
         return alert
+
+    def delete_alert_event(self, alert: BudgetAlertEvent) -> None:
+        self.db.delete(alert)
+        self.db.flush()
 
     def list_alert_events_by_budget(self, budget_id: UUID) -> list[BudgetAlertEvent]:
         stmt = (
@@ -128,6 +138,19 @@ class BudgetRepository(BaseRepository[Budget]):
             .join(BudgetCategory, BudgetAlertEvent.budget_category_id == BudgetCategory.id)
             .where(BudgetCategory.budget_id == budget_id)
             .order_by(BudgetAlertEvent.triggered_at.desc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_active_budgets_for_date(self, user_id: UUID, target_date: date) -> list[Budget]:
+        stmt = (
+            select(Budget)
+            .where(
+                Budget.user_id == user_id,
+                Budget.status == "active",
+                Budget.start_date <= target_date,
+                Budget.end_date >= target_date,
+            )
+            .options(selectinload(Budget.categories).joinedload(BudgetCategory.category))
         )
         return list(self.db.scalars(stmt).all())
 

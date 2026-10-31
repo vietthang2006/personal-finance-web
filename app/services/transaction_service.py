@@ -165,10 +165,13 @@ class TransactionService:
             # Trigger budget alert hook if expense
             if data.kind == "expense" and getattr(self, "budget_service", None) is not None:
                 try:
-                    active_budgets = self.budget_service.list_budgets(user_id, status_filter="active")
-                    for b in active_budgets:
-                        if b.start_date <= data.transaction_date <= b.end_date:
-                            self.budget_service.calculate_progress(user_id, b.id, auto_trigger_alerts=True)
+                    if hasattr(self.budget_service, "rearm_and_evaluate"):
+                        self.budget_service.rearm_and_evaluate(user_id, data.transaction_date)
+                    else:
+                        active_budgets = self.budget_service.list_budgets(user_id, status_filter="active")
+                        for b in active_budgets:
+                            if b.start_date <= data.transaction_date <= b.end_date:
+                                self.budget_service.calculate_progress(user_id, b.id, auto_trigger_alerts=True)
                 except Exception:
                     pass
 
@@ -314,6 +317,17 @@ class TransactionService:
                     entity_id=str(tx.id),
                     changes=data.model_dump(exclude_unset=True),
                 )
+
+            # Budget hook: rearm & evaluate
+            if getattr(self, "budget_service", None) is not None:
+                try:
+                    if hasattr(self.budget_service, "rearm_and_evaluate"):
+                        self.budget_service.rearm_and_evaluate(user_id, target_date)
+                        if target_date != tx.transaction_date:
+                            self.budget_service.rearm_and_evaluate(user_id, tx.transaction_date)
+                except Exception:
+                    pass
+
             self.transaction_repo.commit()
         except IntegrityError as exc:
             self.transaction_repo.rollback()
@@ -361,4 +375,13 @@ class TransactionService:
                 entity_id=str(transaction_id),
                 changes={"deleted_storage_keys": deleted_keys},
             )
+
+        # Budget hook: rearm & evaluate if expense was deleted
+        if getattr(self, "budget_service", None) is not None and tx.kind == "expense":
+            try:
+                if hasattr(self.budget_service, "rearm_and_evaluate"):
+                    self.budget_service.rearm_and_evaluate(user_id, tx.transaction_date)
+            except Exception:
+                pass
+
         self.transaction_repo.commit()

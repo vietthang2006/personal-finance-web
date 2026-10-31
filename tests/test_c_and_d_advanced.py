@@ -31,8 +31,9 @@ class ModuleCDAdvancedTests(unittest.TestCase):
         self.user_id = uuid4()
         self.db = Mock()
 
-    # --- 1. Unit/Integration: Account Validations ---
-    def test_account_creation_validation_errors(self) -> None:
+    # --- [ISSUE-C01] Unit/Integration: Account Creation Validations ---
+    def test_issue_c01_account_creation_validation_errors(self) -> None:
+        """[ISSUE-C01] Validate credit card fields, normal wallet constraints, and duplicate name check."""
         account_repo = Mock()
         account_repo.exists_by_name.return_value = False
         currency_repo = Mock()
@@ -75,8 +76,9 @@ class ModuleCDAdvancedTests(unittest.TestCase):
         with self.assertRaises(AccountConflictError):
             service.create_account(self.user_id, valid_payload)
 
-    # --- 2. Multi-currency summary and cross-rate calculation ---
-    def test_multi_currency_summary_and_cross_rate(self) -> None:
+    # --- [ISSUE-C02] Multi-currency summary and cross-rate calculation ---
+    def test_issue_c02_multi_currency_summary_and_cross_rate(self) -> None:
+        """[ISSUE-C02] Multi-currency account balance conversion via cross-rates, total assets, liabilities, and net worth."""
         acc1 = SimpleNamespace(
             id=uuid4(),
             user_id=self.user_id,
@@ -165,8 +167,50 @@ class ModuleCDAdvancedTests(unittest.TestCase):
         # Net worth = 35,700,000 - 5,000,000 = 30,700,000 VND
         self.assertEqual(summary.net_worth_base, Decimal("30700000"))
 
-    # --- 3. Atomic Rollback on Failed Transaction ---
-    def test_atomic_rollback_on_non_existent_tag(self) -> None:
+    # --- [ISSUE-C03] Account Modification & Deletion Restrictions ---
+    def test_issue_c03_account_deletion_and_modification_restrictions(self) -> None:
+        """[ISSUE-C03] Block modification of kind/currency/opening_balance and block physical delete if transaction history exists."""
+        account_id = uuid4()
+        account = SimpleNamespace(
+            id=account_id,
+            user_id=self.user_id,
+            name="Ví Tiết kiệm",
+            kind="savings",
+            currency_code="VND",
+            opening_balance=Decimal("1000000.00"),
+            current_balance=Decimal("1000000.00"),
+            allow_negative=False,
+            credit_limit=None,
+            billing_day=None,
+            due_day=None,
+            is_archived=False,
+        )
+        account_repo = Mock()
+        account_repo.get_by_id.return_value = account
+        account_repo.has_transactions.return_value = True  # Has transactions!
+
+        service = AccountService(db=self.db, account_repo=account_repo)
+
+        # 3.1 Block modifying kind (409)
+        with self.assertRaises(AppError) as ctx:
+            service.update_account(self.user_id, account_id, AccountUpdate(kind="bank"))
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.code, "ACCOUNT_HAS_TRANSACTIONS")
+
+        # 3.2 Block modifying currency_code (409)
+        with self.assertRaises(AppError) as ctx:
+            service.update_account(self.user_id, account_id, AccountUpdate(currency_code="USD"))
+        self.assertEqual(ctx.exception.status_code, 409)
+
+        # 3.3 Block physical delete (409)
+        with self.assertRaises(AppError) as ctx:
+            service.delete_account(self.user_id, account_id)
+        self.assertEqual(ctx.exception.status_code, 409)
+        account_repo.delete.assert_not_called()
+
+    # --- [ISSUE-D01] Atomic Rollback on Failed Transaction ---
+    def test_issue_d01_atomic_rollback_on_failed_transaction(self) -> None:
+        """[ISSUE-D01] Atomic rollback on non-existent tag or invalid metadata."""
         account_id = uuid4()
         account = SimpleNamespace(
             id=account_id,
@@ -206,8 +250,45 @@ class ModuleCDAdvancedTests(unittest.TestCase):
         account_repo.update_balance_atomic.assert_not_called()
         transaction_repo.create_transaction.assert_not_called()
 
-    # --- 4. Logic Ví E-08: Same Account Edit - No Intermediate False Overdraft ---
-    def test_logic_vi_e08_same_account_update_net_delta(self) -> None:
+    # --- [ISSUE-D02] Atomic Rollback on Insufficient Funds ---
+    def test_issue_d02_atomic_rollback_on_insufficient_funds(self) -> None:
+        """[ISSUE-D02] Transaction that exceeds available balance or credit limit raises AccountInsufficientFundsError."""
+        account_id = uuid4()
+        account = SimpleNamespace(
+            id=account_id,
+            user_id=self.user_id,
+            is_archived=False,
+            current_balance=Decimal("50000.00"),
+        )
+        account_repo = Mock()
+        account_repo.get_by_id.return_value = account
+        account_repo.get_for_update.return_value = account
+        # update_balance_atomic returns None when balance cannot be negative
+        account_repo.update_balance_atomic.return_value = None
+
+        transaction_repo = Mock()
+
+        service = TransactionService(
+            db=self.db,
+            transaction_repo=transaction_repo,
+            account_repo=account_repo,
+        )
+
+        payload = TransactionCreate(
+            account_id=account_id,
+            kind="expense",
+            amount=Decimal("100000.00"),  # 100k > 50k
+            transaction_date=date.today(),
+        )
+
+        with self.assertRaises(AccountInsufficientFundsError):
+            service.create_transaction(self.user_id, payload)
+
+        transaction_repo.create_transaction.assert_not_called()
+
+    # --- [ISSUE-E08] Logic Ví E-08: Same Account Edit - No Intermediate False Overdraft ---
+    def test_issue_d03_logic_vi_e08_same_account_update_net_delta(self) -> None:
+        """[ISSUE-E08] Logic Ví (E-08): Same account edit updates balance with net delta in a single atomic step."""
         account_id = uuid4()
         tx_id = uuid4()
 
@@ -255,8 +336,84 @@ class ModuleCDAdvancedTests(unittest.TestCase):
             account_id, self.user_id, Decimal("10.00")
         )
 
-    # --- 5. Concurrency C1: Multiple threads deducting balance simultaneously ---
-    def test_concurrency_c1_simultaneous_deductions(self) -> None:
+    # --- [ISSUE-D04] Block Modifying Transactions Linked to Goal or Loan ---
+    def test_issue_d04_block_modify_linked_goal_or_loan_transactions(self) -> None:
+        """[ISSUE-D04] Block modifying amount/account/kind of transactions linked to savings goals or loans."""
+        account_id = uuid4()
+        tx_id = uuid4()
+
+        existing_tx = SimpleNamespace(
+            id=tx_id,
+            user_id=self.user_id,
+            account_id=account_id,
+            kind="expense",
+            amount=Decimal("500000.00"),
+            source="goal",  # linked to savings goal!
+            transaction_date=date.today(),
+        )
+        transaction_repo = Mock()
+        transaction_repo.get_by_id.return_value = existing_tx
+
+        service = TransactionService(
+            db=self.db,
+            transaction_repo=transaction_repo,
+        )
+
+        with self.assertRaises(AppError) as ctx:
+            service.update_transaction(self.user_id, tx_id, TransactionUpdate(amount=Decimal("600000.00")))
+        self.assertEqual(ctx.exception.code, "CANNOT_MODIFY_LINKED_TRANSACTION")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    # --- [ISSUE-D05] Delete Transaction Reverses Balance & Collects Attachment Keys ---
+    def test_issue_d05_delete_transaction_balance_reversal_and_attachments(self) -> None:
+        """[ISSUE-D05] Deleting transaction reverses balance atomically and logs attachment storage keys."""
+        account_id = uuid4()
+        tx_id = uuid4()
+
+        existing_tx = SimpleNamespace(
+            id=tx_id,
+            user_id=self.user_id,
+            account_id=account_id,
+            kind="expense",
+            amount=Decimal("200000.00"),
+        )
+        transaction_repo = Mock()
+        transaction_repo.get_by_id.return_value = existing_tx
+
+        account = SimpleNamespace(id=account_id, user_id=self.user_id, current_balance=Decimal("300000.00"))
+        account_repo = Mock()
+        account_repo.get_by_id.return_value = account
+        account_repo.get_for_update.return_value = account
+        account_repo.update_balance_atomic.return_value = Decimal("500000.00")
+
+        attachment_repo = Mock()
+        attachment_repo.list_by_transaction.return_value = [
+            SimpleNamespace(storage_key="attachments/receipt1.png"),
+            SimpleNamespace(storage_key="attachments/receipt2.pdf"),
+        ]
+
+        audit_repo = Mock()
+
+        service = TransactionService(
+            db=self.db,
+            transaction_repo=transaction_repo,
+            account_repo=account_repo,
+            attachment_repo=attachment_repo,
+            audit_repo=audit_repo,
+        )
+
+        service.delete_transaction(self.user_id, tx_id)
+
+        # Reverse balance of expense: +200,000
+        account_repo.update_balance_atomic.assert_called_once_with(account_id, self.user_id, Decimal("200000.00"))
+        transaction_repo.delete_transaction.assert_called_once_with(existing_tx)
+        audit_repo.log.assert_called_once()
+        logged_changes = audit_repo.log.call_args.kwargs["changes"]
+        self.assertEqual(logged_changes["deleted_storage_keys"], ["attachments/receipt1.png", "attachments/receipt2.pdf"])
+
+    # --- [ISSUE-C1] Concurrency C1: Multiple threads deducting balance simultaneously ---
+    def test_issue_d06_concurrency_c1_simultaneous_deductions(self) -> None:
+        """[ISSUE-C1] Concurrency Test C1: Race condition prevention on concurrent deductions using threading.Barrier."""
         balance_lock = threading.Lock()
         current_balance = [Decimal("1000.00")]
 
@@ -293,8 +450,9 @@ class ModuleCDAdvancedTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertEqual(current_balance[0], Decimal("0.00"))
 
-    # --- 6. Concurrency C6: Anti-Deadlock Cross Transfers (A -> B and B -> A) ---
-    def test_concurrency_c6_deadlock_prevention_cross_transfers(self) -> None:
+    # --- [ISSUE-C6] Concurrency C6: Anti-Deadlock Cross Transfers (A -> B and B -> A) ---
+    def test_issue_d07_concurrency_c6_deadlock_prevention_cross_transfers(self) -> None:
+        """[ISSUE-C6] Concurrency Test C6: Anti-deadlock via ascending ID order account locking with threading.Barrier."""
         acc_a_id = UUID("11111111-1111-1111-1111-111111111111")
         acc_b_id = UUID("22222222-2222-2222-2222-222222222222")
 

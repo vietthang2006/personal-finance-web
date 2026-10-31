@@ -16,6 +16,7 @@ from app.repositories.budget_repository import BudgetRepository
 from app.repositories.category_repository import CategoryRepository
 from app.repositories.currency_repository import CurrencyRepository
 from app.repositories.import_repository import ImportRepository
+from app.repositories.notification_repository import NotificationRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
 from app.repositories.tag_repository import TagRepository
 from app.repositories.transaction_repository import TransactionRepository
@@ -89,6 +90,10 @@ def get_budget_repository(db: DbSession) -> BudgetRepository:
     return BudgetRepository(db)
 
 
+def get_notification_repository(db: DbSession) -> NotificationRepository:
+    return NotificationRepository(db)
+
+
 def get_audit_log_repository(db: DbSession) -> AuditLogRepository:
     return AuditLogRepository(db)
 
@@ -110,6 +115,7 @@ TagRepositoryDep = Annotated[TagRepository, Depends(get_tag_repository)]
 AttachmentRepositoryDep = Annotated[AttachmentRepository, Depends(get_attachment_repository)]
 ImportRepositoryDep = Annotated[ImportRepository, Depends(get_import_repository)]
 BudgetRepositoryDep = Annotated[BudgetRepository, Depends(get_budget_repository)]
+NotificationRepositoryDep = Annotated[NotificationRepository, Depends(get_notification_repository)]
 AuditLogRepositoryDep = Annotated[AuditLogRepository, Depends(get_audit_log_repository)]
 
 
@@ -164,6 +170,25 @@ def get_category_service(
     return CategoryService(db=db, category_repo=category_repo)
 
 
+def get_budget_service(
+    db: DbSession,
+    budget_repo: BudgetRepositoryDep,
+    category_repo: CategoryRepositoryDep,
+    notification_repo: NotificationRepositoryDep,
+    audit_repo: AuditLogRepositoryDep,
+) -> BudgetService:
+    return BudgetService(
+        db=db,
+        budget_repo=budget_repo,
+        category_repo=category_repo,
+        notification_repo=notification_repo,
+        audit_repo=audit_repo,
+    )
+
+
+BudgetServiceDep = Annotated[BudgetService, Depends(get_budget_service)]
+
+
 def get_transaction_service(
     db: DbSession,
     transaction_repo: TransactionRepositoryDep,
@@ -173,6 +198,7 @@ def get_transaction_service(
     history_repo: AccountBalanceHistoryRepositoryDep,
     audit_repo: AuditLogRepositoryDep,
     attachment_repo: AttachmentRepositoryDep,
+    budget_service: BudgetServiceDep,
 ) -> TransactionService:
     return TransactionService(
         db=db,
@@ -183,6 +209,7 @@ def get_transaction_service(
         history_repo=history_repo,
         audit_repo=audit_repo,
         attachment_repo=attachment_repo,
+        budget_service=budget_service,
     )
 
 
@@ -244,18 +271,6 @@ def get_import_service(
     )
 
 
-def get_budget_service(
-    db: DbSession,
-    budget_repo: BudgetRepositoryDep,
-    category_repo: CategoryRepositoryDep,
-) -> BudgetService:
-    return BudgetService(
-        db=db,
-        budget_repo=budget_repo,
-        category_repo=category_repo,
-    )
-
-
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 AccountServiceDep = Annotated[AccountService, Depends(get_account_service)]
@@ -265,7 +280,6 @@ TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 AttachmentServiceDep = Annotated[AttachmentService, Depends(get_attachment_service)]
 ImportServiceDep = Annotated[ImportService, Depends(get_import_service)]
-BudgetServiceDep = Annotated[BudgetService, Depends(get_budget_service)]
 
 
 def get_current_user(
