@@ -2,11 +2,18 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.api.v1.router import router as api_v1_router
 from app.core.config import settings
+from app.core.errors import (
+    AppError,
+    app_error_handler,
+    dbapi_error_handler,
+    integrity_error_handler,
+)
 from app.services.recurring_service import process_due_recurring_transactions
-from fastapi.middleware.cors import CORSMiddleware
 
 # Cấu hình CORS
 origins = [
@@ -14,6 +21,7 @@ origins = [
     "http://127.0.0.1:5173",
     # Thêm domain production khi bạn deploy frontend, ví dụ: "https://yourdomain.com"
 ]
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -41,12 +49,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Exception handlers
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(IntegrityError, integrity_error_handler)
+app.add_exception_handler(DBAPIError, dbapi_error_handler)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,          # Hoặc ["*"] trong môi trường dev
-    allow_credentials=True,         # Cho phép gửi cookie / Authorization headers
-    allow_methods=["*"],            # Cho phép GET, POST, PUT, PATCH, DELETE, OPTIONS...
-    allow_headers=["*"],            # Cho phép Content-Type, Authorization...
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(api_v1_router, prefix="/api/v1")

@@ -1,10 +1,10 @@
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TransactionTag
 from app.repositories.base import BaseRepository
 
 
@@ -12,11 +12,15 @@ class TransactionRepository(BaseRepository[Transaction]):
     def __init__(self, db: Session) -> None:
         super().__init__(db)
 
-    def get_by_id(self, transaction_id: UUID, user_id: UUID) -> Transaction | None:
+    def get_by_id(
+        self, transaction_id: UUID, user_id: UUID, for_update: bool = False
+    ) -> Transaction | None:
         stmt = select(Transaction).where(
             Transaction.id == transaction_id,
             Transaction.user_id == user_id,
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         return self.db.scalar(stmt)
 
     def list_by_user(
@@ -58,3 +62,10 @@ class TransactionRepository(BaseRepository[Transaction]):
         self.db.delete(transaction)
         self.db.flush()
 
+    def set_tags(self, transaction_id: UUID, tag_ids: list[int]) -> None:
+        self.db.execute(
+            delete(TransactionTag).where(TransactionTag.transaction_id == transaction_id)
+        )
+        for tid in set(tag_ids):
+            self.db.add(TransactionTag(transaction_id=transaction_id, tag_id=tid))
+        self.db.flush()

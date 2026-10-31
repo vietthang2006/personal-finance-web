@@ -18,16 +18,20 @@ class TransactionCreate(BaseModel):
     transaction_date: date
     description: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=2000)] = None
     merchant: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=150)] = None
+    tag_ids: list[int] = Field(default_factory=list)
     dedup_hash: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[a-fA-F0-9]{64}$")
 
     @model_validator(mode="after")
-    def validate_category_pair(self) -> "TransactionCreate":
-        if (self.category_id is None) != (self.subcategory_id is None):
-            raise ValueError("category_id and subcategory_id must be provided together")
+    def validate_rules(self) -> "TransactionCreate":
+        if self.subcategory_id is not None and self.category_id is None:
+            raise ValueError("category_id must be provided when subcategory_id is specified")
+        if self.transaction_date > date.today():
+            raise ValueError("transaction_date cannot be in the future")
         return self
 
 
 class TransactionUpdate(BaseModel):
+    account_id: UUID | None = None
     kind: Literal["income", "expense"] | None = None
     category_id: int | None = Field(default=None, gt=0)
     subcategory_id: int | None = Field(default=None, gt=0)
@@ -35,6 +39,7 @@ class TransactionUpdate(BaseModel):
     transaction_date: date | None = None
     description: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=2000)] = None
     merchant: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=150)] = None
+    tag_ids: list[int] | None = None
 
     @model_validator(mode="after")
     def validate_patch_fields(self) -> "TransactionUpdate":
@@ -44,12 +49,10 @@ class TransactionUpdate(BaseModel):
         for field_name in ("kind", "amount", "transaction_date"):
             if field_name in supplied and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null")
-        category_supplied = "category_id" in supplied
-        subcategory_supplied = "subcategory_id" in supplied
-        if category_supplied != subcategory_supplied:
-            raise ValueError("category_id and subcategory_id must be updated together")
-        if category_supplied and (self.category_id is None) != (self.subcategory_id is None):
-            raise ValueError("category_id and subcategory_id must both be null or both be provided")
+        if self.transaction_date is not None and self.transaction_date > date.today():
+            raise ValueError("transaction_date cannot be in the future")
+        if self.subcategory_id is not None and self.category_id is None and "category_id" in supplied:
+            raise ValueError("category_id must be provided when subcategory_id is specified")
         return self
 
 
@@ -58,12 +61,14 @@ class TransactionRead(BaseModel):
 
     id: UUID
     account_id: UUID
+    user_id: UUID | None = None
     kind: str
-    category_id: int | None
-    subcategory_id: int | None
+    category_id: int | None = None
+    subcategory_id: int | None = None
     amount: Decimal
     transaction_date: date
-    description: str | None
-    merchant: str | None
-    source: str
+    description: str | None = None
+    merchant: str | None = None
+    source: str = "manual"
     created_at: datetime
+    updated_at: datetime | None = None

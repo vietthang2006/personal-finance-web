@@ -53,6 +53,9 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)] = None
     bank_name: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=100)] = None
+    kind: AccountKind | None = None
+    currency_code: str | None = None
+    opening_balance: Money | None = None
     is_archived: bool | None = None
     credit_limit: Money | None = Field(default=None, ge=0)
     billing_day: int | None = Field(default=None, ge=1, le=28)
@@ -70,6 +73,7 @@ class AccountRead(BaseModel):
     bank_name: str | None
     opening_balance: Decimal
     current_balance: Decimal
+    balance_base: Decimal | None = None
     allow_negative: bool
     credit_limit: Decimal | None
     billing_day: int | None
@@ -77,6 +81,14 @@ class AccountRead(BaseModel):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AccountSummaryResponse(BaseModel):
+    default_currency: str
+    total_assets_base: Decimal
+    total_liabilities_base: Decimal
+    net_worth_base: Decimal
+    accounts: list[AccountRead]
 
 
 class AccountBalanceHistoryRead(BaseModel):

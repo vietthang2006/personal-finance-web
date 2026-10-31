@@ -15,7 +15,7 @@ class TransferCreate(BaseModel):
     to_amount: Money | None = None
     exchange_rate: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=8)] | None = None
     transaction_date: date
-    purpose: Literal["internal", "credit_card_payment"] = "internal"
+    purpose: Literal["normal", "card_payment", "internal", "credit_card_payment"] = "normal"
     description: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=2000)] = None
     idempotency_key: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=100)] = None
 

@@ -4,18 +4,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import AccountServiceDep, CurrentUser, DbSession
+from app.api.deps import AccountServiceDep, CurrentUser
 from app.models.account import Account, AccountBalanceHistory
 from app.schemas.account import (
     AccountBalanceHistoryRead,
     AccountCreate,
     AccountRead,
+    AccountSummaryResponse,
     AccountUpdate,
-)
-from app.services.account_service import (
-    AccountConflictError,
-    AccountNotFoundError,
-    AccountValidationError,
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -26,25 +22,20 @@ def create_account(
     data: AccountCreate,
     user: CurrentUser,
     account_service: AccountServiceDep,
-    db: DbSession,
 ) -> Account:
-    try:
-        return account_service.create_account(user.id, data)
-    except AccountValidationError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    except AccountConflictError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return account_service.create_account(user.id, data)
 
 
-@router.get("", response_model=list[AccountRead])
+@router.get("", response_model=AccountSummaryResponse)
 def list_accounts(
     user: CurrentUser,
     account_service: AccountServiceDep,
     include_archived: bool = Query(default=False, description="Bao gồm các ví đã lưu trữ"),
-) -> list[Account]:
-    return account_service.list_accounts(user.id, include_archived=include_archived)
+) -> AccountSummaryResponse:
+    default_curr = getattr(user, "default_currency", "VND")
+    return account_service.list_accounts_summary(
+        user.id, default_currency=default_curr, include_archived=include_archived
+    )
 
 
 @router.get("/{account_id}", response_model=AccountRead)
@@ -53,10 +44,7 @@ def get_account(
     user: CurrentUser,
     account_service: AccountServiceDep,
 ) -> Account:
-    try:
-        return account_service.get_account(user.id, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return account_service.get_account(user.id, account_id)
 
 
 @router.patch("/{account_id}", response_model=AccountRead)
@@ -65,19 +53,17 @@ def update_account(
     data: AccountUpdate,
     user: CurrentUser,
     account_service: AccountServiceDep,
-    db: DbSession,
 ) -> Account:
-    try:
-        return account_service.update_account(user.id, account_id, data)
-    except AccountNotFoundError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except AccountConflictError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except AccountValidationError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return account_service.update_account(user.id, account_id, data)
+
+
+@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    account_id: UUID,
+    user: CurrentUser,
+    account_service: AccountServiceDep,
+) -> None:
+    account_service.delete_account(user.id, account_id)
 
 
 @router.post("/{account_id}/archive", response_model=AccountRead)
@@ -86,10 +72,7 @@ def archive_account(
     user: CurrentUser,
     account_service: AccountServiceDep,
 ) -> Account:
-    try:
-        return account_service.archive_account(user.id, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return account_service.archive_account(user.id, account_id)
 
 
 @router.post("/{account_id}/unarchive", response_model=AccountRead)
@@ -98,10 +81,7 @@ def unarchive_account(
     user: CurrentUser,
     account_service: AccountServiceDep,
 ) -> Account:
-    try:
-        return account_service.unarchive_account(user.id, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return account_service.unarchive_account(user.id, account_id)
 
 
 @router.get("/{account_id}/history", response_model=list[AccountBalanceHistoryRead])
@@ -112,12 +92,9 @@ def get_account_history(
     start_date: Annotated[date | None, Query(description="Từ ngày (YYYY-MM-DD)")] = None,
     end_date: Annotated[date | None, Query(description="Đến ngày (YYYY-MM-DD)")] = None,
 ) -> list[AccountBalanceHistory]:
-    try:
-        return account_service.get_balance_history(
-            user.id, account_id, start_date=start_date, end_date=end_date
-        )
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return account_service.get_balance_history(
+        user.id, account_id, start_date=start_date, end_date=end_date
+    )
 
 
 @router.post("/{account_id}/snapshot", response_model=AccountBalanceHistoryRead)
@@ -126,7 +103,4 @@ def snapshot_account_balance(
     user: CurrentUser,
     account_service: AccountServiceDep,
 ) -> AccountBalanceHistory:
-    try:
-        return account_service.take_snapshot(user.id, account_id)
-    except AccountNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return account_service.take_snapshot(user.id, account_id)

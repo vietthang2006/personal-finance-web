@@ -22,7 +22,7 @@ class TransactionCategory(Base):
             "code",
             "kind",
             unique=True,
-            postgresql_where=text("user_id IS NULL"),
+            postgresql_where=text("user_id IS NULL AND code IS NOT NULL"),
         ),
         Index(
             "uq_transaction_categories_user_code_kind",
@@ -30,7 +30,7 @@ class TransactionCategory(Base):
             "code",
             "kind",
             unique=True,
-            postgresql_where=text("user_id IS NOT NULL"),
+            postgresql_where=text("user_id IS NOT NULL AND code IS NOT NULL"),
         ),
         CheckConstraint("kind IN ('income', 'expense')", name="ck_transaction_categories_kind"),
     )
@@ -39,7 +39,7 @@ class TransactionCategory(Base):
     user_id: Mapped[UUIDType | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     kind: Mapped[str] = mapped_column(String(10), nullable=False)
     icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -70,8 +70,8 @@ class Tag(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[UUIDType | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    user_id: Mapped[UUIDType] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     color: Mapped[str] = mapped_column(String(7), nullable=False, server_default="#808080")
@@ -105,12 +105,11 @@ class Transaction(Base):
         CheckConstraint("kind IN ('income', 'expense')", name="ck_transactions_kind"),
         CheckConstraint("amount > 0", name="ck_transactions_positive_amount"),
         CheckConstraint(
-            "(category_id IS NULL AND subcategory_id IS NULL) OR "
-            "(category_id IS NOT NULL AND subcategory_id IS NOT NULL)",
+            "subcategory_id IS NULL OR category_id IS NOT NULL",
             name="ck_transactions_category_pair",
         ),
         UniqueConstraint("recurring_id", "transaction_date", name="uq_tx_recurring_day"),
-        UniqueConstraint("user_id", "dedup_hash", name="uq_transactions_user_dedup_hash"),
+        UniqueConstraint("account_id", "dedup_hash", name="uq_tx_account_dedup"),
     )
 
     id: Mapped[UUIDType] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -176,7 +175,7 @@ class Transfer(Base):
         CheckConstraint("from_account_id <> to_account_id", name="ck_transfers_distinct_accounts"),
         CheckConstraint("amount > 0 AND to_amount > 0", name="ck_transfers_positive_amounts"),
         CheckConstraint("exchange_rate > 0", name="ck_transfers_positive_rate"),
-        CheckConstraint("purpose IN ('internal', 'credit_card_payment')", name="ck_transfers_purpose"),
+        CheckConstraint("purpose IN ('normal', 'card_payment', 'internal', 'credit_card_payment')", name="ck_transfers_purpose"),
     )
 
     id: Mapped[UUIDType] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -189,7 +188,7 @@ class Transfer(Base):
     to_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False, server_default="1")
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
-    purpose: Mapped[str] = mapped_column(String(30), nullable=False, server_default="internal")
+    purpose: Mapped[str] = mapped_column(String(30), nullable=False, server_default="normal")
     description: Mapped[str | None] = mapped_column(Text)
     idempotency_key: Mapped[str | None] = mapped_column(String(100), unique=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)

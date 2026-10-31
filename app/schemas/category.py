@@ -10,7 +10,7 @@ CategoryCode = Annotated[str, StringConstraints(min_length=2, max_length=50, pat
 
 
 class CategoryCreate(BaseModel):
-    code: CategoryCode
+    code: CategoryCode | None = None
     name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
     kind: CategoryKind
     icon: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=50)] = None
@@ -38,7 +38,7 @@ class CategoryRead(BaseModel):
 
     id: int
     user_id: UUID | None
-    code: str
+    code: str | None = None
     name: str
     kind: CategoryKind
     icon: str | None = None
@@ -68,3 +68,7 @@ class SubcategoryRead(BaseModel):
     category_id: int
     name: str
     is_active: bool
+
+
+class CategoryDetailRead(CategoryRead):
+    subcategories: list[SubcategoryRead] = Field(default_factory=list)

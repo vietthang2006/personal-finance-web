@@ -52,7 +52,7 @@ class CategoryService:
         return self.category_repo.list_visible(user_id, kind, include_inactive)
 
     def create_category(self, user_id: UUID, data: CategoryCreate) -> TransactionCategory:
-        if self.category_repo.code_exists(data.code, data.kind, user_id):
+        if data.code and self.category_repo.code_exists(data.code, data.kind, user_id):
             raise CategoryConflictError("Category code already exists")
         category = TransactionCategory(
             user_id=user_id,

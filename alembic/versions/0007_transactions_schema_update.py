@@ -1,6 +1,6 @@
-"""Sync Module D schema to v1.1.
+"""Update transactions and transfers schema.
 
-Revision ID: 0007_sync_module_d_v1_1
+Revision ID: 0007_transactions_schema_update
 Revises: 0006_transaction_category_seed
 Create Date: 2026-10-31
 """
@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0007_sync_module_d_v1_1"
+revision = "0007_transactions_schema_update"
 down_revision = "0006_transaction_category_seed"
 branch_labels = None
 depends_on = None
@@ -87,3 +87,4 @@ def downgrade() -> None:
     op.drop_constraint("uq_tags_user_name", "tags", type_="unique")
 
     op.drop_column("transaction_categories", "icon")
+

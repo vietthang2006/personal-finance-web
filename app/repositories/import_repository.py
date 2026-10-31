@@ -60,3 +60,4 @@ class ImportRepository(BaseRepository[ImportBatch]):
     def delete_batch(self, batch: ImportBatch) -> None:
         self.db.delete(batch)
         self.db.flush()
+
