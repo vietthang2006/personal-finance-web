@@ -25,6 +25,7 @@ from app.services.category_service import (
     CategoryServiceError,
     CategoryValidationError,
 )
+from app.services.goal_service import GoalService
 from app.services.import_service import (
     ImportConflictError,
     ImportNotFoundError,
@@ -82,6 +83,7 @@ __all__ = [
     "CategoryService",
     "CategoryServiceError",
     "CategoryValidationError",
+    "GoalService",
     "ImportConflictError",
     "ImportNotFoundError",
     "ImportPayloadTooLargeError",

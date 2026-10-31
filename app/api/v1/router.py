@@ -6,6 +6,7 @@ from app.api.v1 import (
     budgets,
     categories,
     exchange_rates,
+    goals,
     imports,
     recurring,
     tags,
@@ -26,3 +27,4 @@ router.include_router(budgets.router)
 router.include_router(categories.router)
 router.include_router(recurring.router)
 router.include_router(exchange_rates.router)
+router.include_router(goals.router)

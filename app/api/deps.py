@@ -15,6 +15,7 @@ from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.budget_repository import BudgetRepository
 from app.repositories.category_repository import CategoryRepository
 from app.repositories.currency_repository import CurrencyRepository
+from app.repositories.goal_repository import GoalRepository
 from app.repositories.import_repository import ImportRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.password_reset_token_repository import PasswordResetTokenRepository
@@ -28,6 +29,7 @@ from app.services.attachment_service import AttachmentService
 from app.services.auth_service import AuthService
 from app.services.budget_service import BudgetService
 from app.services.category_service import CategoryService
+from app.services.goal_service import GoalService
 from app.services.import_service import ImportService
 from app.services.tag_service import TagService
 from app.services.transaction_service import TransactionService
@@ -90,6 +92,10 @@ def get_budget_repository(db: DbSession) -> BudgetRepository:
     return BudgetRepository(db)
 
 
+def get_goal_repository(db: DbSession) -> GoalRepository:
+    return GoalRepository(db)
+
+
 def get_notification_repository(db: DbSession) -> NotificationRepository:
     return NotificationRepository(db)
 
@@ -115,6 +121,7 @@ TagRepositoryDep = Annotated[TagRepository, Depends(get_tag_repository)]
 AttachmentRepositoryDep = Annotated[AttachmentRepository, Depends(get_attachment_repository)]
 ImportRepositoryDep = Annotated[ImportRepository, Depends(get_import_repository)]
 BudgetRepositoryDep = Annotated[BudgetRepository, Depends(get_budget_repository)]
+GoalRepositoryDep = Annotated[GoalRepository, Depends(get_goal_repository)]
 NotificationRepositoryDep = Annotated[NotificationRepository, Depends(get_notification_repository)]
 AuditLogRepositoryDep = Annotated[AuditLogRepository, Depends(get_audit_log_repository)]
 
@@ -280,6 +287,31 @@ TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 AttachmentServiceDep = Annotated[AttachmentService, Depends(get_attachment_service)]
 ImportServiceDep = Annotated[ImportService, Depends(get_import_service)]
+
+
+def get_goal_service(
+    db: DbSession,
+    goal_repo: GoalRepositoryDep,
+    account_repo: AccountRepositoryDep,
+    category_repo: CategoryRepositoryDep,
+    transaction_repo: TransactionRepositoryDep,
+    notification_repo: NotificationRepositoryDep,
+    audit_repo: AuditLogRepositoryDep,
+    budget_service: BudgetServiceDep,
+) -> GoalService:
+    return GoalService(
+        db=db,
+        goal_repo=goal_repo,
+        account_repo=account_repo,
+        category_repo=category_repo,
+        transaction_repo=transaction_repo,
+        notification_repo=notification_repo,
+        audit_repo=audit_repo,
+        budget_service=budget_service,
+    )
+
+
+GoalServiceDep = Annotated[GoalService, Depends(get_goal_service)]
 
 
 def get_current_user(
