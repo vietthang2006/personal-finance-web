@@ -220,7 +220,7 @@ class TransactionService:
         if tx is None:
             raise TransactionNotFoundError("Transaction not found")
 
-        # Block changing amount/account/kind if linked to goal or loan
+        # Block changing amount/account/kind if linked to goal or loan (BR-T10, BR-G07)
         if getattr(tx, "source", None) in ("goal", "loan"):
             if (
                 (data.amount is not None and data.amount != tx.amount)
@@ -228,9 +228,9 @@ class TransactionService:
                 or (data.kind is not None and data.kind != tx.kind)
             ):
                 raise AppError(
-                    code="CANNOT_MODIFY_LINKED_TRANSACTION",
-                    status_code=400,
-                    message="Cannot modify amount, account or kind of transactions linked to goals or loans",
+                    code="TX_LOCKED_BY_SOURCE",
+                    status_code=409,
+                    message="Cannot modify financial fields of transaction linked to savings goals or loans",
                 )
 
         target_account_id = data.account_id if data.account_id is not None else tx.account_id
@@ -342,6 +342,14 @@ class TransactionService:
             tx = self.transaction_repo.get_by_id(transaction_id, user_id)
         if tx is None:
             raise TransactionNotFoundError("Transaction not found")
+
+        # Block deletion if linked to goal or loan (BR-T10, BR-G07)
+        if getattr(tx, "source", None) in ("goal", "loan"):
+            raise AppError(
+                code="TX_LOCKED_BY_SOURCE",
+                status_code=409,
+                message="Cannot delete transaction linked to savings goals or loans directly",
+            )
 
         # Lock account
         account = self.account_repo.get_for_update(tx.account_id, user_id)

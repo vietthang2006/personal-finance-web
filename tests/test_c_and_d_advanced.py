@@ -361,8 +361,38 @@ class ModuleCDAdvancedTests(unittest.TestCase):
 
         with self.assertRaises(AppError) as ctx:
             service.update_transaction(self.user_id, tx_id, TransactionUpdate(amount=Decimal("600000.00")))
-        self.assertEqual(ctx.exception.code, "CANNOT_MODIFY_LINKED_TRANSACTION")
-        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.code, "TX_LOCKED_BY_SOURCE")
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_issue_d04_block_delete_linked_goal_or_loan_transactions(self) -> None:
+        """[ISSUE-D04] Block deleting transactions linked to savings goals or loans (BR-T10, BR-G07)."""
+        account_id = uuid4()
+        tx_id = uuid4()
+
+        existing_tx = SimpleNamespace(
+            id=tx_id,
+            user_id=self.user_id,
+            account_id=account_id,
+            kind="expense",
+            amount=Decimal("500000.00"),
+            source="goal",  # linked to savings goal!
+            transaction_date=date.today(),
+        )
+        transaction_repo = Mock()
+        transaction_repo.get_by_id.return_value = existing_tx
+        account_repo = Mock()
+
+        service = TransactionService(
+            db=self.db,
+            transaction_repo=transaction_repo,
+            account_repo=account_repo,
+        )
+
+        with self.assertRaises(AppError) as ctx:
+            service.delete_transaction(self.user_id, tx_id)
+        self.assertEqual(ctx.exception.code, "TX_LOCKED_BY_SOURCE")
+        self.assertEqual(ctx.exception.status_code, 409)
+        account_repo.update_balance_atomic.assert_not_called()
 
     # --- [ISSUE-D05] Delete Transaction Reverses Balance & Collects Attachment Keys ---
     def test_issue_d05_delete_transaction_balance_reversal_and_attachments(self) -> None:
