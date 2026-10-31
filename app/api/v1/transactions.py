@@ -1,13 +1,36 @@
+from datetime import date
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import or_, select, update
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import FileResponse
 
-from app.api.deps import CurrentUser, DbSession
-from app.models.account import Account
-from app.models.transaction import Transaction, TransactionCategory, TransactionSubcategory
-from app.schemas.transaction import TransactionCreate, TransactionRead
+from app.api.deps import (
+    AttachmentServiceDep,
+    CurrentUser,
+    DbSession,
+    TagServiceDep,
+    TransactionServiceDep,
+)
+from app.models.transaction import Tag, Transaction, TransactionAttachment
+from app.schemas.attachment import AttachmentRead
+from app.schemas.tag import TagRead, TransactionTagAssign
+from app.schemas.transaction import TransactionCreate, TransactionRead, TransactionUpdate
+from app.services.attachment_service import (
+    AttachmentNotFoundError,
+    AttachmentPayloadTooLargeError,
+    AttachmentValidationError,
+)
+from app.services.tag_service import (
+    TagNotFoundError,
+    TagValidationError,
+)
+from app.services.transaction_service import (
+    AccountInsufficientFundsError,
+    TransactionConflictError,
+    TransactionNotFoundError,
+    TransactionValidationError,
+)
 
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -17,108 +40,228 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 def create_transaction(
     data: TransactionCreate,
     user: CurrentUser,
+    transaction_service: TransactionServiceDep,
     db: DbSession,
 ) -> Transaction:
-    account = db.scalar(
-        select(Account).where(Account.id == data.account_id, Account.user_id == user.id)
-    )
-    if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-    if data.category_id is not None:
-        category = db.scalar(
-            select(TransactionCategory).where(
-                TransactionCategory.id == data.category_id,
-                TransactionCategory.kind == data.kind,
-                or_(TransactionCategory.user_id == user.id, TransactionCategory.user_id.is_(None)),
-                TransactionCategory.is_active.is_(True),
-            )
-        )
-        subcategory = db.scalar(
-            select(TransactionSubcategory).where(
-                TransactionSubcategory.id == data.subcategory_id,
-                TransactionSubcategory.category_id == data.category_id,
-                TransactionSubcategory.is_active.is_(True),
-            )
-        )
-        if category is None or subcategory is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid category")
-
-    delta = data.amount if data.kind == "income" else -data.amount
-    updated_account_id = db.scalar(
-        update(Account)
-        .where(
-            Account.id == data.account_id,
-            Account.user_id == user.id,
-            or_(
-                (Account.allow_negative.is_(False) & (Account.current_balance + delta >= 0)),
-                (
-                    Account.allow_negative.is_(True)
-                    & (
-                        Account.credit_limit.is_(None)
-                        | (Account.current_balance + delta >= -Account.credit_limit)
-                    )
-                ),
-            ),
-        )
-        .values(current_balance=Account.current_balance + delta)
-        .returning(Account.id)
-    )
-    if updated_account_id is None:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Transaction would exceed the account's available balance or credit limit",
-        )
-    transaction = Transaction(
-        user_id=user.id,
-        account_id=data.account_id,
-        kind=data.kind,
-        category_id=data.category_id,
-        subcategory_id=data.subcategory_id,
-        amount=data.amount,
-        transaction_date=data.transaction_date,
-        description=data.description,
-        merchant=data.merchant,
-        dedup_hash=data.dedup_hash,
-    )
-    db.add(transaction)
     try:
-        db.commit()
-    except IntegrityError as exc:
+        return transaction_service.create_transaction(user.id, data)
+    except TransactionValidationError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Duplicate transaction or invalid transaction reference",
-        ) from exc
-    db.refresh(transaction)
-    return transaction
+        detail = str(exc)
+        status_code = status.HTTP_404_NOT_FOUND if detail == "Account not found" else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except AccountInsufficientFundsError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except TransactionConflictError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[TransactionRead])
 def list_transactions(
     user: CurrentUser,
-    db: DbSession,
+    transaction_service: TransactionServiceDep,
+    account_id: UUID | None = None,
+    kind: Literal["income", "expense"] | None = None,
+    category_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> list[Transaction]:
-    return list(
-        db.scalars(
-            select(Transaction)
-            .where(Transaction.user_id == user.id)
-            .order_by(Transaction.transaction_date.desc(), Transaction.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        ).all()
+    return transaction_service.list_transactions(
+        user_id=user.id,
+        account_id=account_id,
+        kind=kind,
+        category_id=category_id,
+        from_date=from_date,
+        to_date=to_date,
+        offset=offset,
+        limit=limit,
     )
 
 
 @router.get("/{transaction_id}", response_model=TransactionRead)
-def get_transaction(transaction_id: UUID, user: CurrentUser, db: DbSession) -> Transaction:
-    transaction = db.scalar(
-        select(Transaction).where(
-            Transaction.id == transaction_id, Transaction.user_id == user.id
+def get_transaction(
+    transaction_id: UUID,
+    user: CurrentUser,
+    transaction_service: TransactionServiceDep,
+) -> Transaction:
+    try:
+        return transaction_service.get_transaction(user.id, transaction_id)
+    except TransactionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.patch("/{transaction_id}", response_model=TransactionRead)
+def update_transaction(
+    transaction_id: UUID,
+    data: TransactionUpdate,
+    user: CurrentUser,
+    transaction_service: TransactionServiceDep,
+    db: DbSession,
+) -> Transaction:
+    try:
+        return transaction_service.update_transaction(user.id, transaction_id, data)
+    except TransactionNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except TransactionValidationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except AccountInsufficientFundsError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except TransactionConflictError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transaction(
+    transaction_id: UUID,
+    user: CurrentUser,
+    transaction_service: TransactionServiceDep,
+    db: DbSession,
+) -> Response:
+    try:
+        transaction_service.delete_transaction(user.id, transaction_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except TransactionNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AccountInsufficientFundsError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+# ------------------ Tag Endpoints for Transaction ------------------
+
+
+@router.get("/{transaction_id}/tags", response_model=list[TagRead])
+def list_transaction_tags(
+    transaction_id: UUID,
+    user: CurrentUser,
+    tag_service: TagServiceDep,
+) -> list[Tag]:
+    try:
+        return tag_service.list_transaction_tags(user.id, transaction_id)
+    except TagNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/{transaction_id}/tags", response_model=list[TagRead])
+def assign_transaction_tags(
+    transaction_id: UUID,
+    data: TransactionTagAssign,
+    user: CurrentUser,
+    tag_service: TagServiceDep,
+    db: DbSession,
+) -> list[Tag]:
+    try:
+        return tag_service.assign_tags(user.id, transaction_id, data.tag_ids)
+    except TagNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/{transaction_id}/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_transaction_tag(
+    transaction_id: UUID,
+    tag_id: int,
+    user: CurrentUser,
+    tag_service: TagServiceDep,
+    db: DbSession,
+) -> Response:
+    try:
+        tag_service.remove_tag(user.id, transaction_id, tag_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except TagNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+# ------------------ Attachment Endpoints for Transaction ------------------
+
+
+@router.get("/{transaction_id}/attachments", response_model=list[AttachmentRead])
+def list_transaction_attachments(
+    transaction_id: UUID,
+    user: CurrentUser,
+    attachment_service: AttachmentServiceDep,
+) -> list[TransactionAttachment]:
+    try:
+        return attachment_service.list_attachments(user.id, transaction_id)
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{transaction_id}/attachments",
+    response_model=AttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_transaction_attachment(
+    transaction_id: UUID,
+    user: CurrentUser,
+    attachment_service: AttachmentServiceDep,
+    db: DbSession,
+    file: UploadFile = File(...),
+) -> TransactionAttachment:
+    content = await file.read()
+    try:
+        return attachment_service.upload_attachment(
+            user_id=user.id,
+            transaction_id=transaction_id,
+            file_name=file.filename or "attachment.bin",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
         )
-    )
-    if transaction is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-    return transaction
+    except AttachmentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AttachmentPayloadTooLargeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)) from exc
+    except AttachmentValidationError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.get("/{transaction_id}/attachments/{attachment_id}/download")
+def download_transaction_attachment(
+    transaction_id: UUID,
+    attachment_id: UUID,
+    user: CurrentUser,
+    attachment_service: AttachmentServiceDep,
+) -> FileResponse:
+    try:
+        attachment, file_path = attachment_service.get_attachment(
+            user.id, transaction_id, attachment_id
+        )
+        return FileResponse(
+            path=str(file_path),
+            media_type=attachment.mime_type,
+            filename=attachment.file_name,
+        )
+    except AttachmentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{transaction_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+def delete_transaction_attachment(
+    transaction_id: UUID,
+    attachment_id: UUID,
+    user: CurrentUser,
+    attachment_service: AttachmentServiceDep,
+    db: DbSession,
+) -> Response:
+    try:
+        attachment_service.delete_attachment(user.id, transaction_id, attachment_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except AttachmentNotFoundError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

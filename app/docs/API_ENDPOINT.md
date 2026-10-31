@@ -18,6 +18,17 @@ Tài liệu được phân loại theo cấu trúc mô-đun hóa để phục v�
   - [1.5. Quên mật khẩu & Đặt lại mật khẩu (Forgot & Reset Password)](#15-quên-mật-khẩu--đặt-lại-mật-khẩu-forgot--reset-password)
   - [1.6. Đổi mật khẩu chủ động (Change Password)](#16-đổi-mật-khẩu-chủ-động-change-password)
   - [1.7. Tổng hợp các tính năng bảo mật (Security Features & Best Practices)](#17-tổng-hợp-các-tính-năng-bảo-mật-security-features--best-practices)
+- [2. MODULE D: GIAO DỊCH, DANH MỤC, CHUYỂN TIỀN & ĐÍNH KÈM (DANH MỤC SỐ 4)](#2-module-d-giao-dịch-danh-mục-chuyển-tiền--đính-kèm-danh-mục-số-4)
+  - [2.1. Quản lý Danh mục & Danh mục con (Categories & Subcategories)](#21-quản-lý-danh-mục--danh-mục-con-categories--subcategories)
+  - [2.2. Quản lý Giao dịch Thu / Chi (Transactions)](#22-quản-lý-giao-dịch-thu--chi-transactions)
+  - [2.3. Chuyển tiền giữa các tài khoản (Transfers)](#23-chuyển-tiền-giữa-các-tài-khoản-transfers)
+  - [2.4. Quản lý Nhãn phân loại (Tags)](#24-quản-lý-nhãn-phân-loại-tags)
+  - [2.5. Tệp đính kèm hóa đơn (Transaction Attachments)](#25-tệp-đính-kèm-hóa-đơn-transaction-attachments)
+- [3. MODULE E: IMPORT SAO KÊ 2 PHA (DANH MỤC SỐ 5)](#3-module-e-import-sao-kê-2-pha-danh-mục-số-5)
+  - [3.1. Tải file sao kê để xem trước (Preview / Staging)](#31-tải-file-sao-kê-để-xem-trước-preview--staging)
+  - [3.2. Danh sách & Chi tiết lô Import](#32-danh-sách--chi-tiết-lô-import)
+  - [3.3. Xác nhận ghi sổ giao dịch (Confirm / Finalize)](#33-xác-nhận-ghi-sổ-giao-dịch-confirm--finalize)
+  - [3.4. Hủy lô nháp (Cancel Batch)](#34-hủy-lô-nháp-cancel-batch)
 
 ---
 
@@ -449,3 +460,144 @@ Cho phép người dùng đã đăng nhập tự đổi mật khẩu tài khoả
 8. **Chống dò quét tài khoản (Anti-User Enumeration)**:
    - Endpoint quên mật khẩu luôn phản hồi thành công một thông điệp thống nhất để ngăn chặn kẻ tấn công lợi dụng phản hồi nhằm lập danh sách email có trong hệ thống.
 
+
+
+---
+
+# 2. MODULE D: GIAO DỊCH, DANH MỤC, CHUYỂN TIỀN & ĐÍNH KÈM (DANH MỤC SỐ 4)
+
+Module D đảm nhiệm việc quản lý thu / chi thực tế, hệ thống danh mục phân cấp, luồng chuyển tiền đa tài khoản và tệp đính kèm hóa đơn.
+
+---
+
+### 2.1. QUẢN LÝ DANH MỤC & DANH MỤC CON (CATEGORIES & SUBCATEGORIES)
+
+- **GET `/api/v1/categories`**: Liệt kê các danh mục khả dụng (danh mục mặc định hệ thống + danh mục người dùng tự định nghĩa). Query params: `kind` (`income` | `expense`), `include_inactive` (`true` | `false`).
+- **POST `/api/v1/categories`**: Tạo danh mục tùy chỉnh người dùng (`code`, `name`, `kind`). Mã `code` là duy nhất trên phạm vi người dùng.
+- **PATCH `/api/v1/categories/{id}`**: Cập nhật tên hoặc trạng thái kích hoạt của danh mục tùy chỉnh. (Danh mục hệ thống là read-only).
+- **GET `/api/v1/categories/{id}/subcategories`**: Liệt kê danh mục con của danh mục chỉ định.
+- **POST `/api/v1/categories/{id}/subcategories`**: Thêm danh mục con mới vào danh mục tùy chỉnh.
+- **PATCH `/api/v1/categories/{id}/subcategories/{sub_id}`**: Cập nhật tên / trạng thái danh mục con tùy chỉnh.
+
+---
+
+### 2.2. QUẢN LÝ GIAO DỊCH THU / CHI (TRANSACTIONS)
+
+- **POST `/api/v1/transactions`**: Tạo giao dịch thu/chi (`201 Created`).
+  - Tự động kiểm tra số dư và cập nhật số dư tài khoản nguyên tử (`atomic balance update`).
+  - Chống thấu chi (`overdraft prevention`) nếu tài khoản không bật `allow_negative`, hoặc giới hạn bởi `credit_limit`.
+  - Hỗ trợ mã băm chống trùng lặp `dedup_hash` (64 ký tự hex SHA-256).
+- **GET `/api/v1/transactions`**: Liệt kê danh sách giao dịch với bộ lọc phân trang:
+  - `account_id`: Lọc theo tài khoản.
+  - `kind`: `income` hoặc `expense`.
+  - `category_id`: Lọc theo danh mục.
+  - `from_date` / `to_date`: Lọc theo khoảng thời gian giao dịch.
+  - `offset` / `limit`: Phân trang dữ liệu.
+- **GET `/api/v1/transactions/{id}`**: Lấy chi tiết một giao dịch theo UUID.
+- **PATCH `/api/v1/transactions/{id}`**: Chỉnh sửa giao dịch (loại, số tiền, ngày, danh mục, mô tả, merchant).
+  - Tự động tính chênh lệch (`net_delta = new_delta - old_delta`) và cập nhật số dư nguyên tử.
+- **DELETE `/api/v1/transactions/{id}`**: Xóa giao dịch (`204 No Content`).
+  - Hoàn tác số dư tài khoản nguyên tử.
+
+---
+
+### 2.3. CHUYỂN TIỀN GIỮA CÁC TÀI KHOẢN (TRANSFERS)
+
+- **POST `/api/v1/transfers`**: Thực hiện chuyển khoản nội bộ giữa hai tài khoản cùng người dùng (`201 Created`).
+  - Ràng buộc: `from_account_id != to_account_id`.
+  - Hỗ trợ chuyển đổi ngoại tệ: tự động áp dụng `to_amount` và tỷ giá `exchange_rate`.
+  - Trừ tiền tài khoản nguồn và cộng tiền tài khoản đích trong cùng một database transaction với cơ chế chống deadlock.
+  - Hỗ trợ `idempotency_key` để chống gọi trùng request.
+- **GET `/api/v1/transfers`**: Liệt kê lịch sử chuyển tiền, hỗ trợ lọc theo tài khoản gửi, tài khoản nhận, ngày tháng.
+- **GET `/api/v1/transfers/{id}`**: Xem chi tiết lệnh chuyển khoản.
+
+---
+
+### 2.4. QUẢN LÝ NHÃN PHÂN LOẠI (TAGS)
+
+- **GET `/api/v1/tags`**: Liệt kê nhãn người dùng.
+- **POST `/api/v1/tags`**: Tạo nhãn mới (`name`, `color` dạng HEX `#RRGGBB`).
+- **PATCH `/api/v1/tags/{id}`**: Cập nhật nhãn.
+- **DELETE `/api/v1/tags/{id}`**: Xóa nhãn.
+- **GET `/api/v1/transactions/{id}/tags`**: Lấy danh sách nhãn gắn trên giao dịch.
+- **POST `/api/v1/transactions/{id}/tags`**: Gắn danh sách nhãn vào giao dịch (`tag_ids`).
+- **DELETE `/api/v1/transactions/{id}/tags/{tag_id}`**: Gỡ nhãn khỏi giao dịch.
+
+---
+
+### 2.5. TỆP ĐÍNH KÈM HÓA ĐƠN (TRANSACTION ATTACHMENTS)
+
+- **POST `/api/v1/transactions/{id}/attachments`**: Tải tệp hóa đơn đính kèm (`multipart/form-data`). Giới hạn dung lượng tối đa **10MB** theo ràng buộc database `ck_attachments_max_size`.
+- **GET `/api/v1/transactions/{id}/attachments`**: Liệt kê các tệp đính kèm của giao dịch.
+- **GET `/api/v1/transactions/{id}/attachments/{attachment_id}/download`**: Tải về tệp đính kèm.
+- **DELETE `/api/v1/transactions/{id}/attachments/{attachment_id}`**: Xóa tệp đính kèm và giải phóng bộ nhớ đĩa.
+
+
+---
+
+# 3. MODULE E: IMPORT SAO KÊ 2 PHA (DANH MỤC SỐ 5)
+
+Module E đảm nhiệm quy trình nạp dữ liệu giao dịch hàng loạt từ sao kê ngân hàng theo mô hình **2 pha an toàn: Xem trước nháp (Preview / Staging) $\to$ Duyệt & Ghi sổ chính thức (Confirm / Finalize)**.
+
+---
+
+### 3.1. TẢI FILE SAO KÊ ĐỂ XEM TRƯỚC (PREVIEW / STAGING)
+
+- **API Endpoint**: `POST /api/v1/imports/preview`
+- **HTTP Method**: `POST`
+- **Request Format**: `multipart/form-data`
+  - `account_id`: UUID của tài khoản nhận sao kê.
+  - `file`: Tệp CSV (`.csv` mã hóa UTF-8 hoặc UTF-8-BOM) hoặc Excel (`.xlsx`), kích thước tối đa 10MB (`MAX_IMPORT_SIZE`), giới hạn tối đa 10,000 dòng.
+- **Business Flow**:
+  1. Tính mã băm `file_hash` SHA-256 từ toàn bộ nội dung tệp.
+  2. Kiểm tra chống nạp trùng: nếu `(account_id, file_hash)` đã tồn tại ở trạng thái `confirmed`, chặn và trả về mã lỗi `409 Conflict`.
+  3. Duyệt và kiểm tra tính hợp lệ từng dòng: định dạng ngày tháng, hướng thu/chi (`income`/`expense`), số tiền dương hợp lệ, tính mã băm chống trùng lặp `dedup_hash`.
+  4. Phân loại trạng thái dòng:
+     - `valid`: Dòng hợp lệ, sẵn sàng nạp.
+     - `duplicate`: Dòng bị trùng lặp với giao dịch đã có trong database hoặc lặp lại trong chính file tải lên.
+     - `invalid`: Dòng lỗi cú pháp, thiếu cột bắt buộc, hoặc sai định dạng số/ngày.
+  5. Lưu lô import nháp vào `import_batches` với trạng thái `staged`, thiết lập thời hạn hết hạn `expires_at` là **24 giờ**.
+  6. Lưu chi tiết toàn bộ các dòng vào `import_rows`.
+- **Response**: `201 Created` trả về `ImportPreviewResponse` gồm thống kê số dòng và danh sách dòng đã parse.
+
+---
+
+### 3.2. DANH SÁCH & CHI TIẾT LÔ IMPORT
+
+- **GET `/api/v1/imports/batches`**: Liệt kê lịch sử các đợt import của người dùng. Query params: `account_id`, `offset`, `limit`.
+- **GET `/api/v1/imports/batches/{batch_id}`**: Lấy chi tiết một đợt import kèm toàn bộ danh sách các dòng preview để người dùng rà soát hoặc chọn lại danh mục trước khi confirm.
+
+---
+
+### 3.3. XÁC NHẬN GHI SỔ GIAO DỊCH (CONFIRM / FINALIZE)
+
+- **API Endpoint**: `POST /api/v1/imports/batches/{batch_id}/confirm`
+- **Request Body**:
+  ```json
+  {
+    "category_choices": [
+      {
+        "row_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        "category_id": 1,
+        "subcategory_id": 2
+      }
+    ]
+  }
+  ```
+- **Business Flow**:
+  1. Kiểm tra trạng thái lô: bắt buộc phải là `staged` và chưa hết hạn (`expires_at > now`). Nếu quá hạn, tự động chuyển thành `expired` và báo lỗi `422`.
+  2. Lọc các dòng có trạng thái `valid`.
+  3. Gán danh mục người dùng đã chọn vào từng dòng, kiểm tra tính hợp lệ của cặp `(category_id, subcategory_id)`.
+  4. Tính toán tổng số tiền thay đổi (`net_delta = sum(income) - sum(expense)`).
+  5. Cập nhật số dư tài khoản nguyên tử (`atomic update`) qua `AccountRepository.update_balance_atomic`. Nếu vi phạm thấu chi hoặc hạn mức tín dụng, rollback toàn bộ và báo lỗi `409`.
+  6. Tạo các bản ghi giao dịch chính thức trong bảng `transactions` với `source = 'import'`, `import_batch_id = batch.id`.
+  7. Liên kết ngược `transaction_id` vào từng bản ghi `import_rows` và đổi trạng thái thành `imported`.
+  8. Cập nhật `import_batches.status = 'confirmed'`, ghi nhận `confirmed_at = now` và `imported_rows`.
+- **Response**: `200 OK` trả về `ImportConfirmation(id, status, imported_rows)`.
+
+---
+
+### 3.4. HỦY LÔ NHÁP (CANCEL BATCH)
+
+- **API Endpoint**: `DELETE /api/v1/imports/batches/{batch_id}`
+- **Quy tắc**: Chỉ cho phép xóa/hủy các lô nháp chưa confirm (`staged`, `expired`, `failed`). Không được phép hủy lô đã `confirmed` để bảo vệ tính toàn vẹn của sổ giao dịch. Trả về `204 No Content`.

@@ -16,3 +16,5 @@ class CurrencyRepository(BaseRepository[Currency]):
         stmt = select(select(Currency).where(Currency.code == code.upper()).exists())
         return bool(self.db.scalar(stmt))
 
+    def list_all(self) -> list[Currency]:
+        return list(self.db.scalars(select(Currency).order_by(Currency.code.asc())).all())
