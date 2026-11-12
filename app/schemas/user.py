@@ -38,6 +38,15 @@ class UserCreate(BaseModel):
         return value.upper()
 
 
+# class UserRead(BaseModel):
+#     model_config = ConfigDict(from_attributes=True)
+
+#     id: UUID
+#     email: EmailStr
+#     username: str
+#     full_name: str | None
+#     default_currency: str
+#     status: str
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -47,6 +56,16 @@ class UserRead(BaseModel):
     full_name: str | None
     default_currency: str
     status: str
+    timezone: str
+    language: str
+    roles: list[str] = Field(default_factory=list)
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def roles_to_codes(cls, value: object) -> object:
+        if isinstance(value, list):
+            return [getattr(role, "code", role) for role in value]
+        return value
 
 
 class TokenPair(BaseModel):
