@@ -4,6 +4,7 @@ import AppLayout from "@/app/layouts/AppLayout";
 import { PlaceholderPage } from "@/shared/components";
 import { authRoutes, passwordRoutes, GuestRoute, ProtectedRoute, RoleRoute } from "@/features/auth";
 import { profileRoutes } from "@/features/profile";
+import { accountsRoutes } from "@/features/accounts";
 
 export const router = createBrowserRouter([
   // 1. Chỉ dành cho người CHƯA đăng nhập (Đăng nhập, Đăng ký)
@@ -30,7 +31,7 @@ export const router = createBrowserRouter([
         children: [
           { path: "/", element: <Navigate to="/dashboard" replace /> },
           { path: "/dashboard", element: <PlaceholderPage title="Tổng quan" /> },
-          { path: "/accounts", element: <PlaceholderPage title="Ví" /> },
+          ...accountsRoutes,
           { path: "/transactions", element: <PlaceholderPage title="Giao dịch" /> },
           { path: "/budgets", element: <PlaceholderPage title="Ngân sách" /> },
           { path: "/goals", element: <PlaceholderPage title="Mục tiêu" /> },
